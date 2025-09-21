@@ -215,41 +215,6 @@ class LoRAAttention(Attention):
 
 ##############################################################################################
 
-
-""" original block
-class Block(nn.Module):
-
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., init_values=None, act_layer=nn.GELU, norm_layer=nn.LayerNorm,
-                 attn_head_dim=None, use_rpb=False, window_size=14):
-        super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = Attention(
-            dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            attn_drop=attn_drop, proj_drop=drop, attn_head_dim=attn_head_dim,
-            use_rpb=use_rpb, window_size=window_size)
-        # NOTE: drop path for stochastic depth, we shall see if this is better than dropout here
-        self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=act_layer, drop=drop)
-
-        if init_values > 0:
-            self.gamma_1 = nn.Parameter(init_values * torch.ones((dim)), requires_grad=True)
-            self.gamma_2 = nn.Parameter(init_values * torch.ones((dim)), requires_grad=True)
-        else:
-            self.gamma_1, self.gamma_2 = None, None
-
-    def forward(self, x):
-        if self.gamma_1 is None:
-            x = x + self.drop_path(self.attn(self.norm1(x)))
-            x = x + self.drop_path(self.mlp(self.norm2(x)))
-        else:
-            x = x + self.drop_path(self.gamma_1 * self.attn(self.norm1(x)))
-            x = x + self.drop_path(self.gamma_2 * self.mlp(self.norm2(x)))
-        return x """
-
-
 ############################## Block with Lora
 
 class Block(nn.Module):
@@ -479,51 +444,7 @@ class LocalAttentionHead(nn.Module):
 
 class IColoriT(nn.Module):
     """ Vision Transformer with support for patch or hybrid CNN input stage
-    ############# original
-
-
-    def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=512, embed_dim=512, depth=12,
-                 num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop_rate=0., attn_drop_rate=0.,
-                 drop_path_rate=0., norm_layer=nn.LayerNorm, init_values=None,
-                 use_rpb=False, avg_hint=False, head_mode='default', mask_cent=False):
-        super().__init__()
-        self.num_classes = num_classes
-        assert num_classes == 2 * patch_size ** 2
-        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
-        self.patch_size = patch_size
-        self.in_chans = in_chans
-        self.avg_hint = avg_hint
-
-        # self.mask_token = nn.Parameter(torch.zeros(2))
-        # trunc_normal_(self.mask_token, std=.02)
-
-        self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size,
-                                      in_chans=in_chans, embed_dim=embed_dim, mask_cent=mask_cent)
-        num_patches = self.patch_embed.num_patches  # 2
-
-        self.pos_embed = get_sinusoid_encoding_table(num_patches, embed_dim)
-
-        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
-        self.blocks = nn.ModuleList([Block(
-            dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, qk_scale=qk_scale,
-            drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer,
-            init_values=init_values, use_rpb=use_rpb, window_size=img_size // patch_size)
-            for i in range(depth)])
-
-        self.norm = norm_layer(embed_dim)
-
-        if head_mode == 'linear':
-            self.head = nn.Linear(embed_dim, num_classes) if num_classes > 0 else nn.Identity()
-        elif head_mode == 'cnn':
-            self.head = CnnHead(embed_dim, num_classes, window_size=img_size // patch_size)
-        elif head_mode == 'locattn':
-            self.head = LocalAttentionHead(embed_dim, num_classes, window_size=img_size // patch_size)
-        else:
-            raise NotImplementedError('Check head type')
-
-        self.tanh = nn.Tanh()
-
-        self.apply(self._init_weights) """
+     """
 
     ####################### 2 clase IColoriT para usar LoRA en attention
     def __init__(self, img_size=224, patch_size=16, in_chans=3, num_classes=512, embed_dim=512, depth=12,
@@ -810,13 +731,6 @@ def icolorit_base_4ch_patch16_224(pretrained=False, **kwargs):
     for name, param in model.named_parameters():
         print(name, param.requires_grad)
 
-    """if pretrained:
-        #init_ckpt_path = kwargs.get("init_ckpt")  # Obtiene el path del checkpoint si está presente, de lo contrario devuelve None
-        if init_ckpt_path is not None:  # Si se proporcionó un path, carga el checkpoint
-            checkpoint = torch.load(init_ckpt_path, map_location="cpu")
-            model.load_state_dict(checkpoint["model"])
-            print("fine tune model on")
-            print("Loaded pretrained model from checkpoint:",init_ckpt_path)"""
     if pretrained:
         if init_ckpt_path is not None:
             checkpoint = torch.load(init_ckpt_path, map_location="cpu")

@@ -63,19 +63,6 @@ class abGrid():
         self.AB = self.A * self.B
         self.gamut_size = gamut_size
 
-    """def update_gamut(self, l_in):
-        warnings.filterwarnings("ignore")
-        thresh = 1.0
-        pts_lab = np.concatenate((l_in + np.zeros((self.A, self.B, 1)), self.pts_full_grid), axis=2)
-        self.pts_rgb = (255 * np.clip(color.lab2rgb(pts_lab), 0, 1)).astype('uint8')
-        pts_lab_back = color.rgb2lab(self.pts_rgb)
-        pts_lab_diff = np.linalg.norm(pts_lab - pts_lab_back, axis=2)
-
-        self.mask = pts_lab_diff < thresh
-        mask3 = np.tile(self.mask[..., np.newaxis], [1, 1, 3])
-        self.masked_rgb = self.pts_rgb.copy()
-        self.masked_rgb[np.invert(mask3)] = 255
-        return self.masked_rgb, self.mask"""
 
     def update_gamut(self, l_in, ref_mask=None):
         """
