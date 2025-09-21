@@ -1,0 +1,34 @@
+name: icolorit
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  # PyTorch (CPU por defecto)
+  - pytorch::pytorch
+  - pytorch::torchvision
+  # Scientific/imagen
+  - numpy=1.22.4
+  - pillow=9.2.0
+  - opencv=4.6.*
+  - scikit-image=0.19.3
+  # GUI
+  - pyqt=5.15.*
+  # Utilidades
+  - tqdm=4.64.0
+  - tensorboardx=2.5.1
+  - pip
+  - pip:
+      - timm==0.4.12
+      - einops==0.4.1
+      - loralib
+      - gdown
+      # (opcional) si rueda de opencv de pip, se comenta 'opencv' arriba y usa:
+      # - opencv-python==4.6.0.66
+
+  # --- GPU (opcional): descomentar estas 2 líneas si hay NVIDIA + driver reciente ---
+  # - pytorch::pytorch-cuda=12.1
+
+
+# si necesita para linux sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0

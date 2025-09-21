@@ -1,0 +1,24 @@
+# Núcleo DL
+torch              # CPU por defecto; para CUDA instalá la build cuXX desde pytorch.org
+torchvision
+
+# Modelado y utils
+timm==0.4.12       # compatible con register_model y capas usadas
+einops==0.4.1
+loralib
+
+# Numérico / imagen
+numpy==1.22.4
+opencv-python==4.6.0.66
+Pillow==9.2.0
+scikit-image==0.19.3
+
+# GUI
+PyQt5==5.15.7
+
+# Logs / métricas
+tensorboardX==2.5.1
+tqdm==4.64.0
+
+# Descarga de checkpoints (si usás Google Drive)
+gdown
