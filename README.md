@@ -2,8 +2,8 @@
 ### OPCION 1- Virtual env
 
 # iColoriT Demo Software # 1. Clonar el repo
-git clone https://github.com/<user>/iColoriT_demo_2.git
-cd iColoriT_demo_2
+git clone https://github.com/RosanaGC/demo_icolorit_lora.git
+cd demo_icolorit_lora
 
 # 2. Crear entorno virtual
 python3 -m venv .venv
