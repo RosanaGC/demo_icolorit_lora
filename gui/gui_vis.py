@@ -51,7 +51,28 @@ class GUI_VIS(QWidget):
         self._pad_dw, self._pad_dh, self._pad_ww, self._pad_wh = map(int, (dw, dh, ww, wh))
         self.update()
 
+    def reset(self):
+        """
+        Limpia el estado visual del widget:
+        - Quita el resultado actual.
+        - Restablece geometría base, zoom y offsets.
+        - Mantiene el modo follow/fijo.
+        """
+        self._result = None
 
+        # Geometría/zoom
+        self._pad_dw = None
+        self._pad_dh = None
+        self._pad_ww = None
+        self._pad_wh = None
+        self._pad_zoom = 1.0
+
+        # Offsets de scroll
+        self._h_off = 0
+        self._v_off = 0
+
+        # Repintar vacío
+        self.update()
 
     # --- Pintado ---
     def paintEvent(self, ev):
