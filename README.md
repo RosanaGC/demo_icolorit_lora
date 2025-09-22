@@ -50,7 +50,7 @@ cd iColoriT_demo_2
 # 2. Construir imagen (CPU)
 docker build -t icolorit:cpu -f Dockerfile.cpu .
 
-# 3. Correr contenedor (monta tu carpeta local)
+# 3. Correr contenedor
 docker run --rm -it -v $(pwd):/app icolorit:cpu
 
 
