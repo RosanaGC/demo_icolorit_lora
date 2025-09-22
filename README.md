@@ -3,6 +3,7 @@
 # pesos
 
 https://drive.google.com/file/d/1MXZFhYvQTRenU1xgjpYUIie4SjphY9Ky/view?usp=sharing
+gdown "https://drive.google.com/uc?id=1MXZFhYvQTRenU1xgjpYUIie4SjphY9Ky" -O Lora_r32_Dataset_4_epochs_1000_wES_lrf_1e-3.pth
 
 # iColoriT Demo Software # 1. Clonar el repo
 git clone https://github.com/RosanaGC/demo_icolorit_lora.git
