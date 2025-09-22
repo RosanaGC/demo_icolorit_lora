@@ -334,7 +334,7 @@ class GUIDraw(QWidget):
         if dir_path is None:
             if not self.save_dir:
                 base_default = os.path.dirname(os.path.abspath(self.image_file)) if self.image_file else os.getcwd()
-                chosen = QFileDialog.getExistingDirectory(self, "Elegí la carpeta de destino", base_default)
+                chosen = QFileDialog.getExistingDirectory(self, "carpeta de destino", base_default)
                 if not chosen:
                     print("[Save] Cancelado por el usuario.")
                     return
@@ -427,7 +427,7 @@ class GUIDraw(QWidget):
         base_dir = os.path.dirname(os.path.abspath(self.image_file)) if self.image_file else os.getcwd()
         suggested = os.path.join(base_dir, "icolor.png")
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save As… (elegí nombre base)",
+            self, "Save As… (nombre base)",
             suggested,
             "PNG Image (*.png);;All Files (*)"
         )
