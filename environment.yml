@@ -1,4 +1,4 @@
-name: iColorit
+name: icolorit_demo
 channels:
   - pytorch
   - nvidia
