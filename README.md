@@ -1,5 +1,8 @@
 
 ### paso 1
+# pesos
+
+https://drive.google.com/file/d/1MXZFhYvQTRenU1xgjpYUIie4SjphY9Ky/view?usp=sharing
 
 # iColoriT Demo Software # 1. Clonar el repo
 git clone https://github.com/RosanaGC/demo_icolorit_lora.git
