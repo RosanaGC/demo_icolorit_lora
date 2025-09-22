@@ -2,8 +2,9 @@
 ### paso 1
 
 # iColoriT Demo Software # 1. Clonar el repo
-git clone https://github.com/RosanaGC/demo_icolorit_lora.git](https://github.com/RosanaGC/demo_icolorit_lora.git
+git clone https://github.com/RosanaGC/demo_icolorit_lora.git
 cd demo_icolorit_lora
+
 
 ### OPCION 1- Virtual env
 
