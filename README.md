@@ -1,9 +1,11 @@
 
-### OPCION 1- Virtual env
+### paso 1
 
 # iColoriT Demo Software # 1. Clonar el repo
 git clone https://github.com/RosanaGC/demo_icolorit_lora.git](https://github.com/RosanaGC/demo_icolorit_lora.git
 cd demo_icolorit_lora
+
+### OPCION 1- Virtual env
 
 # 2. Crear entorno virtual
 python3 -m venv .venv
@@ -28,8 +30,7 @@ bash Miniconda3-latest-Linux-x86_64.sh
 # cerrar y abrir terminal
 
 # 2. Clonar el repo
-git clone https://github.com/<user>/iColoriT_demo_2.git
-cd iColoriT_demo_2
+
 
 # 3. Crear entorno
 conda env create -f environment.yml
@@ -44,8 +45,7 @@ bash scripts/run_gui.sh --device auto
 ### OPCION 3 DOCKER
 
 # 1. Clonar el repo
-git clone https://github.com/<user>/iColoriT_demo_2.git
-cd iColoriT_demo_2
+
 
 # 2. Construir imagen (CPU)
 docker build -t icolorit:cpu -f Dockerfile.cpu .
