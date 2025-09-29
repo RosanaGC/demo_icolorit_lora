@@ -1,9 +1,7 @@
+
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QPainter, QImage, QColor
-from PyQt5.QtCore import QRect
-
-# agregar 'GUI_VIS' object has no attribute 'reset'
-
+from PyQt5.QtCore import QRect, Qt
 
 class GUI_VIS(QWidget):
     def __init__(self, win_size=512, scale=1.0, parent=None):
@@ -37,11 +35,13 @@ class GUI_VIS(QWidget):
 
     def on_hscroll(self, v: int):
         self._h_off = int(v)
-        if self._follow_zoom: self.update()
+        if self._follow_zoom:
+            self.update()
 
     def on_vscroll(self, v: int):
         self._v_off = int(v)
-        if self._follow_zoom: self.update()
+        if self._follow_zoom:
+            self.update()
 
     def update_result(self, rgb_uint8):
         self._result = rgb_uint8
@@ -74,6 +74,18 @@ class GUI_VIS(QWidget):
         # Repintar vacío
         self.update()
 
+    # --- helpers internos ---
+    def _aspect_fit_rect(self, img_w: int, img_h: int, win_w: int, win_h: int) -> QRect:
+        """Calcula un rectángulo de destino que mantiene aspecto y entra completo."""
+        if img_w <= 0 or img_h <= 0 or win_w <= 0 or win_h <= 0:
+            return QRect(0, 0, 0, 0)
+        scale = min(win_w / img_w, win_h / img_h)
+        draw_w = int(round(img_w * scale))
+        draw_h = int(round(img_h * scale))
+        x = (win_w - draw_w) // 2
+        y = (win_h - draw_h) // 2
+        return QRect(x, y, draw_w, draw_h)
+
     # --- Pintado ---
     def paintEvent(self, ev):
         p = QPainter(self)
@@ -85,30 +97,21 @@ class GUI_VIS(QWidget):
         h, w, _ = self._result.shape
         qimg = QImage(self._result.data, w, h, w * 3, QImage.Format_RGB888)
 
-        if (self._pad_dw is not None and self._pad_dh is not None and
+        if (self._follow_zoom and
+            self._pad_dw is not None and self._pad_dh is not None and
             self._pad_ww is not None and self._pad_wh is not None):
-
-            if not self._follow_zoom:
-                # MODO FIJO: dibuja SIEMPRE con la geometría BASE (sin zoom ni pan)
-                dest = QRect(self._pad_dw, self._pad_dh, self._pad_ww, self._pad_wh)
-            else:
-                # MODO FOLLOW: aplica el mismo zoom y resta los offsets de scroll
-                zw = int(round(self._pad_ww * self._pad_zoom))
-                zh = int(round(self._pad_wh * self._pad_zoom))
-                dx = int(round(self._pad_dw * self._pad_zoom)) - self._h_off
-                dy = int(round(self._pad_dh * self._pad_zoom)) - self._v_off
-                dest = QRect(dx, dy, zw, zh)
-
+            # MODO FOLLOW: reproduce zoom/pan del pad
+            zw = int(round(self._pad_ww * self._pad_zoom))
+            zh = int(round(self._pad_wh * self._pad_zoom))
+            dx = int(round(self._pad_dw * self._pad_zoom)) - self._h_off
+            dy = int(round(self._pad_dh * self._pad_zoom)) - self._v_off
+            dest = QRect(dx, dy, zw, zh)
         else:
-            # Fallback: centra en el widget
-            side = getattr(self, "win_size", min(self.width(), self.height()))
-            if w >= h:
-                ww = side; wh = int(round(side * h / w))
-                dw = 0; dh = (side - wh) // 2
-            else:
-                wh = side; ww = int(round(side * w / h))
-                dh = 0; dw = (side - ww) // 2
-            dest = QRect(dw, dh, ww, wh)
+            # MODO NO FOLLOW: aspect‑fit a TODO el widget (sin cortes)
+            dest = self._aspect_fit_rect(w, h, self.width(), self.height())
 
+        # Suavizado al escalar
+        p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        p.setRenderHint(QPainter.Antialiasing, True)
         p.drawImage(dest, qimg, QRect(0, 0, w, h))
         p.end()
