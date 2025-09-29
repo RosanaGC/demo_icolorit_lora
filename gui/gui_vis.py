@@ -1,4 +1,4 @@
-
+# gui_vis.py — drop-in compatible: aspect-fit when not following, mirror pad when following
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QPainter, QImage, QColor
 from PyQt5.QtCore import QRect, Qt
