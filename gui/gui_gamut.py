@@ -140,3 +140,4 @@ class GUIGamut(QWidget):
         self.mouseClicked = False
         self.reference_mask = None
         self.update()
+
