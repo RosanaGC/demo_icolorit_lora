@@ -1,15 +1,18 @@
-# gui_main.py
+# gui_main.py — principal con Drawing Pad + Result; gamuts y referencia en ventanas aparte.
+# Mantiene el zoom tipo “lupa” original (MagnifierOverlay + HoverZoomFilter).
+# NO se modifica gui_gamut.py.
+
 import time
 from PIL import Image
 
 from PyQt5.QtGui import QPixmap, QImage, QTransform, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QCheckBox, QGroupBox, QHBoxLayout, QPushButton, QVBoxLayout,
-    QWidget, QLabel, QFileDialog, QSizePolicy, QApplication,
+    QWidget, QFileDialog, QSizePolicy, QApplication,
     QGraphicsView, QGraphicsScene, QSplitter, QScrollArea
 )
 from PyQt5.QtCore import (
-    pyqtSignal, Qt, QTimer, QObject, QPoint, QSize, QRect, QEvent
+    Qt, QObject, QPoint, QSize, QRect, QEvent
 )
 
 import numpy as np
@@ -54,7 +57,7 @@ class AspectRatioContainer(QWidget):
         self.child.setGeometry(x, y, target_w, target_h)
 
 
-# ---------- Lupa / hover-zoom que resalta el píxel exacto ----------
+# ---------- Lupa / hover-zoom (misma que tenías) ----------
 class MagnifierOverlay(QWidget):
     """
     Lupa con mega-zoom que resalta la celda (píxel) exacta bajo el cursor.
@@ -189,12 +192,18 @@ class HoverZoomFilter(QObject):
             self.overlay.update_from_widget(self.owner, ev.pos())
             return False
         if t == QEvent.Wheel:
+            # rueda (angleDelta) o trackpad (pixelDelta)
+            dy = ev.angleDelta().y() if hasattr(ev, "angleDelta") else 0
+            if dy == 0 and hasattr(ev, "pixelDelta"):
+                dy = ev.pixelDelta().y()
+            if dy == 0:
+                return False
             if ev.modifiers() & Qt.ShiftModifier:
-                delta = 40 if ev.angleDelta().y() > 0 else -40
+                delta = 40 if dy > 0 else -40
                 self.overlay.set_size(self.overlay.size + delta)
             else:
                 step = 1.45 if (ev.modifiers() & Qt.ControlModifier) else 1.20
-                factor = step if ev.angleDelta().y() > 0 else 1/step
+                factor = step if dy > 0 else 1/step
                 self.overlay.set_zoom(self.overlay.zoom * factor)
             pos = ev.pos() if hasattr(ev, "pos") else QPoint(0, 0)
             self.overlay.update_from_widget(self.owner, pos)
@@ -260,7 +269,45 @@ class ZoomableImageView(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
 
-# ---------- UI principal ----------
+# ========= Ventanas flotantes (gamut free y referencia) =========
+class GamutFreeWindow(QWidget):
+    def __init__(self, gamut_widget: GUIGamut, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("ab Gamut (free)")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(8, 8, 8, 8)
+        lay.addLayout(self._boxed(AspectRatioContainer(gamut_widget, 1.0), "ab Gamut (free)"))
+        self.resize(320, 340)
+
+    def _boxed(self, widget, title):
+        box = QGroupBox(title); box.setFlat(True)
+        v = QVBoxLayout(box); v.setContentsMargins(8, 8, 8, 8); v.addWidget(widget)
+        out = QVBoxLayout(); out.addWidget(box); return out
+
+
+class GamutRefWindow(QWidget):
+    def __init__(self, gamut_ref: GUIGamut, ref_view: QWidget,
+                 ref_btn: QPushButton, used_palette: GUIPalette, color_push: QPushButton, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Reference / Gamut (reference) / Palette")
+        lay = QVBoxLayout(self); lay.setContentsMargins(8, 8, 8, 8)
+        # referencia
+        lay.addWidget(ref_view)
+        row = QHBoxLayout(); row.addWidget(ref_btn); row.addStretch(1); lay.addLayout(row)
+        # gamut ref
+        lay.addLayout(self._boxed(AspectRatioContainer(gamut_ref, 1.0), "ab Gamut (reference)"))
+        # paleta + color
+        lay.addLayout(self._boxed(used_palette, 'Recently used colors'))
+        lay.addLayout(self._boxed(color_push, 'Current Color'))
+        self.resize(380, 700)
+
+    def _boxed(self, widget, title):
+        box = QGroupBox(title); box.setFlat(True)
+        v = QVBoxLayout(box); v.setContentsMargins(8, 8, 8, 8); v.addWidget(widget)
+        out = QVBoxLayout(); out.addWidget(box); return out
+
+
+# ===================== UI principal =====================
 class IColoriTUI(QWidget):
     def __init__(self, color_model, img_file=None, load_size=224, win_size=256, device='cpu'):
         super().__init__()
@@ -268,59 +315,19 @@ class IColoriTUI(QWidget):
         self.ref_img_pil = None
         self.ref_lab_cache = None
 
-        # ===== Splitter principal =====
+        # ===== Splitter principal (solo centro + derecha) =====
         splitter = QSplitter(Qt.Horizontal, self)
 
-        # ----------------- Panel IZQUIERDO -----------------
-        leftPanel = QWidget()
-        left = QVBoxLayout(leftPanel)
-
-        self.gamutWidgetFree = GUIGamut(gamut_size=110)
-        self.gamutWidgetRef  = GUIGamut(gamut_size=110)
-
-        left.addLayout(self._boxed(AspectRatioContainer(self.gamutWidgetFree, 1.0), 'ab Gamut (free)'))
-        left.addLayout(self._boxed(AspectRatioContainer(self.gamutWidgetRef,  1.0), 'ab Gamut (reference)'))
-
-        # preview de imagen de referencia (solo ver/zoom)
-        self.ref_view = ZoomableImageView()
-        self.ref_view.setMinimumSize(220, 180)
-        self.ref_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        left.addWidget(self.ref_view)
-
-        ref_row = QHBoxLayout()
-        self.ref_img_btn = QPushButton("Reference image")
-        ref_row.addWidget(self.ref_img_btn)
-        ref_row.addStretch(1)
-        left.addLayout(ref_row)
-        self.ref_img_btn.clicked.connect(self.load_reference_image)
-
-        # Paleta + color actual
-        self.usedPalette = GUIPalette(grid_sz=(10, 1))
-        left.addLayout(self._boxed(self.usedPalette, 'Recently used colors'))
-
-        self.colorPush = QPushButton()
-        self.colorPush.setFixedHeight(25)
-        self.colorPush.setStyleSheet("background-color: grey")
-        left.addLayout(self._boxed(self.colorPush, 'Current Color'))
-
-        left.addStretch(1)
-
-        # Lupa solo en los gamuts
-        self._magnifier = MagnifierOverlay(self, size=420, zoom=16.0)
-        self.gamutWidgetFree.installEventFilter(HoverZoomFilter(self.gamutWidgetFree, self._magnifier))
-        self.gamutWidgetRef.installEventFilter(HoverZoomFilter(self.gamutWidgetRef,  self._magnifier))
-
-        # ----------------- Panel CENTRAL -----------------
-        centerPanel = QWidget()
-        center = QVBoxLayout(centerPanel)
+        # ----------------- Panel CENTRAL (Drawing Pad) -----------------
+        centerPanel = QWidget(); center = QVBoxLayout(centerPanel)
 
         self.drawWidget = GUIDraw(color_model, load_size=load_size, win_size=win_size, device=device)
         self.drawWidget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Scroll para que el Drawing Pad pueda crecer con el zoom sin mover el panel derecho
+        # Scroll para que el Drawing Pad pueda crecer con el zoom
         self.drawScroll = QScrollArea()
         self.drawScroll.setWidget(self.drawWidget)
-        self.drawScroll.setWidgetResizable(False)  # importante: barra de scroll en vez de reflow
+        self.drawScroll.setWidgetResizable(False)
         self.drawScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.drawScroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
@@ -335,9 +342,8 @@ class IColoriTUI(QWidget):
             drawPadMenu.addWidget(w)
         center.addLayout(drawPadMenu)
 
-        # ----------------- Panel DERECHO -----------------
-        rightPanel = QWidget()
-        right = QVBoxLayout(rightPanel)
+        # ----------------- Panel DERECHO (Result) -----------------
+        rightPanel = QWidget(); right = QVBoxLayout(rightPanel)
 
         self.visWidget = GUI_VIS(win_size=win_size, scale=win_size / float(load_size))
         visBox = self._boxed(self.visWidget, 'Colorized Result')
@@ -349,35 +355,46 @@ class IColoriTUI(QWidget):
         visBox.addLayout(visMenu)
 
         # Añadir paneles al splitter
-        splitter.addWidget(leftPanel)
         splitter.addWidget(centerPanel)
         splitter.addWidget(rightPanel)
-        splitter.setStretchFactor(0, 2)   # izquierda
-        splitter.setStretchFactor(1, 5)   # centro
-        splitter.setStretchFactor(2, 5)   # derecha
-        splitter.setSizes([320, 920, 920])
+        splitter.setStretchFactor(0, 5)   # centro
+        splitter.setStretchFactor(1, 5)   # derecha
+        splitter.setSizes([920, 920])
 
         # Layout raíz
         root = QHBoxLayout(self)
         root.addWidget(splitter)
+
+        # ======= Widgets que van en ventanas aparte =======
+        self.gamutWidgetFree = GUIGamut(gamut_size=110)
+        self.gamutWidgetRef  = GUIGamut(gamut_size=110)
+
+        self.ref_view = ZoomableImageView(); self.ref_view.setMinimumSize(220, 180)
+        self.ref_img_btn = QPushButton("Reference image")
+        self.usedPalette = GUIPalette(grid_sz=(10, 1))
+        self.colorPush   = QPushButton(); self.colorPush.setFixedHeight(25)
+        self.colorPush.setStyleSheet("background-color: grey")
+
+        # Ventanas flotantes
+        self.win_gamut_free = GamutFreeWindow(self.gamutWidgetFree)
+        self.win_gamut_ref  = GamutRefWindow(self.gamutWidgetRef, self.ref_view,
+                                             self.ref_img_btn, self.usedPalette, self.colorPush)
+
+        self.win_gamut_free.show()
+        self.win_gamut_ref.show()
+
+        # ===== Lupa (igual que antes) DIRECTAMENTE en los gamuts =====
+        self._magnifier = MagnifierOverlay(self, size=420, zoom=16.0)
+        self.gamutWidgetFree.installEventFilter(HoverZoomFilter(self.gamutWidgetFree, self._magnifier))
+        self.gamutWidgetRef.installEventFilter(HoverZoomFilter(self.gamutWidgetRef,  self._magnifier))
 
         # ===== Conexiones =====
         self.drawWidget.update()
         self.visWidget.update()
         self.colorPush.clicked.connect(self.drawWidget.change_color)
 
-
         self.drawWidget.canvas_geom_changed.connect(self.visWidget.match_canvas)
-
-        # conexiones nuevas (después de construir widgets)
-        #self.drawWidget.canvas_geom_changed.connect(self.visWidget.on_canvas_geom)
-
-        #self.drawScroll.horizontalScrollBar().valueChanged.connect(self.visWidget.on_hscroll)
-        #self.drawScroll.verticalScrollBar().valueChanged.connect(self.visWidget.on_vscroll)
-
-
-        self.visWidget.set_follow_zoom(False)  # Fijo (NO zoom/pan en la derecha)
-        # self.visWidget.set_follow_zoom(True)  # Follow (zoom/pan sincronizados)
+        self.visWidget.set_follow_zoom(False)  # fijo (no follow)
 
         self.drawWidget.update_color.connect(self.colorPush.setStyleSheet)
         self.drawWidget.update_result.connect(self.visWidget.update_result)
@@ -388,7 +405,7 @@ class IColoriTUI(QWidget):
         self.gamutWidgetFree.update_color.connect(self.drawWidget.set_color)
         self.gamutWidgetRef.update_color.connect(self.drawWidget.set_color)
 
-        # Y, para que el gamut de referencia sea recortado por L:
+        # recorte por L para referencia
         self.drawWidget.update_ab.connect(
             lambda *_: self.update_reference_ab_gamut_from_target(2.0, True)
         )
@@ -407,15 +424,15 @@ class IColoriTUI(QWidget):
         self.bSave.clicked.connect(self.save)
         self.bSaveAs.clicked.connect(lambda: self.drawWidget.save_result_as())
         self.bLoad.clicked.connect(self.load)
+        self.ref_img_btn.clicked.connect(self.load_reference_image)
 
         # arranque
         self.start_t = time.time()
         if img_file is not None:
             self.drawWidget.init_result(img_file)
-        print('UI initialized')
+        print('UI initialized (principal + ventanas flotantes)')
 
-        # Ventana responsiva y centrada
-        #ver porque esta
+        # Ventana principal centrada
         scr = QApplication.primaryScreen().availableGeometry()
         self.setMinimumSize(1100, 680)
         self.resize(int(scr.width() * 0.9), int(scr.height() * 0.9))
@@ -450,6 +467,8 @@ class IColoriTUI(QWidget):
     def quit(self):
         print('time spent = %3.3f' % (time.time() - self.start_t))
         self.close()
+        # (Opcional) cerrar ventanas flotantes:
+        # self.win_gamut_free.close(); self.win_gamut_ref.close()
 
     def save(self):
         print('time spent = %3.3f' % (time.time() - self.start_t))
@@ -473,7 +492,7 @@ class IColoriTUI(QWidget):
         elif event.key() in (Qt.Key_Minus, Qt.Key_Underscore): self.drawWidget.zoom_out()
         elif event.key() == Qt.Key_0:                       self.drawWidget.zoom_reset()
 
-        # Undo / Redo (Ctrl/Cmd+Z / Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y)
+        # Undo / Redo
         mods = event.modifiers()
         cmd_or_ctrl = (mods & Qt.ControlModifier) or (mods & Qt.MetaModifier)
         if cmd_or_ctrl and event.key() == Qt.Key_Z and not (mods & Qt.ShiftModifier):
@@ -550,6 +569,6 @@ class IColoriTUI(QWidget):
 
             # refrescar ambos gamuts con la misma L
             self.gamutWidgetFree.set_gamut(L_target)  # sin máscara -> gamut completo a esa L
-            self.gamutWidgetRef.set_gamut(L_target)  # con máscara -> intersección con la referencia
+            self.gamutWidgetRef.set_gamut(L_target)   # con máscara -> intersección con la referencia
 
         print(f"[RefGamut] L_target={L_target:.2f}, ΔL={delta_L}")
