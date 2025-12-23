@@ -32,6 +32,7 @@
 - conda activate icolorit_demo
 
 ### paso 3: ejecutar
+- python3 icolorit_ui.py --model_path <path/to/checkpoint> --target_image <path/to/image>
 
 
 
