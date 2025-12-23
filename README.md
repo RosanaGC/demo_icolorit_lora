@@ -29,7 +29,7 @@
 
 #####  crear entorno
 - conda env create -f environment.yml
-- conda activate icolorit
+- conda activate icolorit_demo
 
 ### paso 3: ejecutar
 
