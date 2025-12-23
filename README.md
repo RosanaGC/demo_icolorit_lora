@@ -1,62 +1,44 @@
 
-### paso 1
-# pesos
+## paso 1
+### pesos
 
 https://drive.google.com/file/d/1MXZFhYvQTRenU1xgjpYUIie4SjphY9Ky/view?usp=sharing
 gdown "https://drive.google.com/uc?id=1MXZFhYvQTRenU1xgjpYUIie4SjphY9Ky" -O Lora_r32_Dataset_4_epochs_1000_wES_lrf_1e-3.pth
 
-# iColoriT Demo Software # 1. Clonar el repo
+## paso 2 iColoriT Demo Software 
+
 git clone https://github.com/RosanaGC/demo_icolorit_lora.git
 cd demo_icolorit_lora
 
 
-### OPCION 1- Virtual env
+## OPCION 1- Virtual env
 
-# 2. Crear entorno virtual
+Crear entorno virtual
 python3 -m venv .venv
 source .venv/bin/activate
 
-# 3. Instalar dependencias
+### Instalar dependencias
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# 4. Descargar checkpoints
-bash scripts/download_checkpoints.sh
-
-# 5. Ejecutar
-python -m gui.gui_main --device auto
+### Ejecutar
 
 
-###  OPCION 2 CONDA/MINICONDA
 
-# 1. Instalar Miniconda (una vez)
+##  OPCION 2 CONDA/MINICONDA
+
+### 1. Instalar Miniconda
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 bash Miniconda3-latest-Linux-x86_64.sh
-# cerrar y abrir terminal
+### 2 cerrar y abrir terminal
 
-# 2. Clonar el repo
-
-
-# 3. Crear entorno
+### 3. Crear entorno
 conda env create -f environment.yml
 conda activate icolorit
 
-# 4. Descargar checkpoints
-bash scripts/download_checkpoints.sh
-
-# 5. Ejecutar
-bash scripts/run_gui.sh --device auto
-
-### OPCION 3 DOCKER
-
-# 1. Clonar el repo
+### 4. Ejecutar
 
 
-# 2. Construir imagen (CPU)
-docker build -t icolorit:cpu -f Dockerfile.cpu .
-
-# 3. Correr contenedor
-docker run --rm -it -v $(pwd):/app icolorit:cpu
 
 
 
