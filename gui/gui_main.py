@@ -403,11 +403,15 @@ class IColoriTUI(QWidget):
         self.visWidget.update()
         self.colorPush.clicked.connect(self.drawWidget.change_color)
 
-        self.drawWidget.canvas_geom_changed.connect(self.visWidget.match_canvas)
-        self.visWidget.set_follow_zoom(False)  # fijo (no follow)
+        self.drawWidget.canvas_geom_changed.connect(self.visWidget.on_canvas_geom)
+        self.visWidget.set_follow_zoom(True)  # seguir zoom/pan
 
         self.drawWidget.update_color.connect(self.colorPush.setStyleSheet)
         self.drawWidget.update_result.connect(self.visWidget.update_result)
+
+        # sincronizar scroll del Drawing Pad con el Result
+        self.drawScroll.horizontalScrollBar().valueChanged.connect(self.visWidget.on_hscroll)
+        self.drawScroll.verticalScrollBar().valueChanged.connect(self.visWidget.on_vscroll)
 
         self.drawWidget.update_gammut.connect(self.gamutWidgetFree.set_gamut)
         self.drawWidget.update_ab.connect(self.gamutWidgetFree.set_ab)

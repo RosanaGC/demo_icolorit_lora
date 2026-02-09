@@ -42,6 +42,7 @@ class PointEdit(UserEdit):
         self._hint_yxs = []  # lista de (y, x) por píxel
         self._hint_ab = []  # lista de (a, b) float por píxel
         self._hw_cache = None  # (H, W) del último get_input
+        self._hints = []  # lista [(y0,y1,x0,x1,a,b), ...]
 
     def add(self, pnt, color, userColor, width, ui_count):
         self.pnt = pnt
@@ -133,6 +134,7 @@ class PointEdit(UserEdit):
         if self._hw_cache != (H, W):
             self._hint_yxs = []
             self._hint_ab = []
+            self._hints = []
             self._hw_cache = (H, W)
 
         # QColor -> Lab -> (a,b)
@@ -143,6 +145,8 @@ class PointEdit(UserEdit):
 
         x1, y1 = tl
         x2, y2 = br
+        # guardar el rectángulo completo como hint único
+        self._hints = [(y1, y2, x1, x2, a_val, b_val)]
         for y in range(y1, y2 + 1):
             for x in range(x1, x2 + 1):
                 if 0 <= y < H and 0 <= x < W:

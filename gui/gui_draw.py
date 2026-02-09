@@ -46,7 +46,7 @@ class GUIDraw(QWidget):
     update_result = pyqtSignal(object)
 
     # NUEVO: para alinear el panel derecho
-    canvas_geom_changed = pyqtSignal(int, int, int, int) # dw, dh, win_w, win_h
+    canvas_geom_changed = pyqtSignal(int, int, int, int, float) # dw, dh, win_w, win_h, zoom
 
     def __init__(self, model=None, load_size=224, win_size=512, device='cpu'):
         super().__init__()
@@ -94,7 +94,7 @@ class GUIDraw(QWidget):
 
     def _emit_canvas_geom(self):
         self.canvas_geom_changed.emit(int(self.dw), int(self.dh),
-                                      int(self.win_w), int(self.win_h))
+                                      int(self.win_w), int(self.win_h), float(self.zoom))
 
     def _affine_params(self):
         """
@@ -175,7 +175,7 @@ class GUIDraw(QWidget):
         self.brushWidth = 1.0
 
         # avisar geometría base (zoom=1) al resto de la UI
-        self.canvas_geom_changed.emit(self.dw, self.dh, self.win_w, self.win_h)
+        self.canvas_geom_changed.emit(self.dw, self.dh, self.win_w, self.win_h, float(self.zoom))
 
         # resetear tamaño del widget acorde al zoom actual
         self.set_zoom(self.zoom)
@@ -211,6 +211,7 @@ class GUIDraw(QWidget):
                 int(round(self.dh * self.zoom)),
                 int(round(self.win_w * self.zoom)),
                 int(round(self.win_h * self.zoom)),
+                float(self.zoom),
             )
             self.update()
             self._emit_canvas_geom()
