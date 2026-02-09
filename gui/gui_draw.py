@@ -568,7 +568,7 @@ class GUIDraw(QWidget):
     # -------------------- Pintado --------------------
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(event.rect(), QColor(49, 54, 49))
+        p.fillRect(event.rect(), QColor(255, 255, 255))
         p.setRenderHint(QPainter.Antialiasing)
 
         im = self.gray_win if (self.use_gray or self.result is None) else self.result

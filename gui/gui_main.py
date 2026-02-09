@@ -9,7 +9,7 @@ from PyQt5.QtGui import QPixmap, QImage, QTransform, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QCheckBox, QGroupBox, QHBoxLayout, QPushButton, QVBoxLayout,
     QWidget, QFileDialog, QSizePolicy, QApplication,
-    QGraphicsView, QGraphicsScene, QSplitter, QScrollArea
+    QGraphicsView, QGraphicsScene, QSplitter, QScrollArea, QFrame
 )
 from PyQt5.QtCore import (
     Qt, QObject, QPoint, QSize, QRect, QEvent
@@ -274,6 +274,7 @@ class GamutFreeWindow(QWidget):
     def __init__(self, gamut_widget: GUIGamut, parent=None):
         super().__init__(parent)
         self.setWindowTitle("ab Gamut (free)")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
         lay.addLayout(self._boxed(AspectRatioContainer(gamut_widget, 1.0), "ab Gamut (free)"))
@@ -290,6 +291,7 @@ class GamutRefWindow(QWidget):
                  ref_btn: QPushButton, used_palette: GUIPalette, color_push: QPushButton, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Reference / Gamut (reference) / Palette")
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         lay = QVBoxLayout(self); lay.setContentsMargins(8, 8, 8, 8)
         # referencia
         lay.addWidget(ref_view)
@@ -330,8 +332,11 @@ class IColoriTUI(QWidget):
         self.drawScroll.setWidgetResizable(False)
         self.drawScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.drawScroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.drawScroll.setFixedSize(win_size, win_size)
+        self.drawScroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.drawScroll.setFrameShape(QFrame.NoFrame)
 
-        center.addLayout(self._boxed(self.drawScroll, 'Drawing Pad'))
+        center.addLayout(self._boxed(self.drawScroll, 'Drawing Pad', align=Qt.AlignCenter))
 
         drawPadMenu = QHBoxLayout()
         self.bGray = QCheckBox("&Gray"); self.bGray.setToolTip('show gray-scale image')
@@ -346,7 +351,9 @@ class IColoriTUI(QWidget):
         rightPanel = QWidget(); right = QVBoxLayout(rightPanel)
 
         self.visWidget = GUI_VIS(win_size=win_size, scale=win_size / float(load_size))
-        visBox = self._boxed(self.visWidget, 'Colorized Result')
+        self.visWidget.setFixedSize(win_size, win_size)
+        self.visWidget.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        visBox = self._boxed(self.visWidget, 'Colorized Result', align=Qt.AlignCenter)
         right.addLayout(visBox)
         visMenu = QHBoxLayout()
         self.bRestart = QPushButton("&Restart"); self.bRestart.setToolTip('Restart the system')
@@ -382,6 +389,9 @@ class IColoriTUI(QWidget):
 
         self.win_gamut_free.show()
         self.win_gamut_ref.show()
+        # Asegurar que queden por delante al iniciar
+        self.win_gamut_free.raise_()
+        self.win_gamut_ref.raise_()
 
         # ===== Lupa (igual que antes) DIRECTAMENTE en los gamuts =====
         self._magnifier = MagnifierOverlay(self, size=420, zoom=16.0)
@@ -439,12 +449,15 @@ class IColoriTUI(QWidget):
         geo = self.frameGeometry(); geo.moveCenter(scr.center()); self.move(geo.topLeft())
 
     # ---------- Helpers UI ----------
-    def _boxed(self, widget, title):
+    def _boxed(self, widget, title, align=None):
         box = QGroupBox(title)
         box.setFlat(True)
         v = QVBoxLayout(box)
         v.setContentsMargins(8, 8, 8, 8)
-        v.addWidget(widget)
+        if align is None:
+            v.addWidget(widget)
+        else:
+            v.addWidget(widget, 0, align)
         out = QVBoxLayout(); out.addWidget(box)
         return out
 
@@ -476,6 +489,16 @@ class IColoriTUI(QWidget):
 
     def load(self): self.drawWidget.load_image()
 
+    def closeEvent(self, event):
+        # Cerrar también las ventanas flotantes
+        try:
+            if self.win_gamut_free is not None:
+                self.win_gamut_free.close()
+            if self.win_gamut_ref is not None:
+                self.win_gamut_ref.close()
+        finally:
+            super().closeEvent(event)
+
     def change_color(self):
         print('change color')
         self.drawWidget.change_color(use_suggest=True)
@@ -502,7 +525,12 @@ class IColoriTUI(QWidget):
 
     # ---------- Reference ----------
     def load_reference_image(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select reference image", "", "Images (*.png *.jpg *.jpeg)")
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select reference image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff);;All Files (*)"
+        )
         if not path: return
         img = Image.open(path).convert("RGB")
         img.thumbnail((1600, 1600), Image.LANCZOS)

@@ -89,7 +89,7 @@ class GUI_VIS(QWidget):
     # --- Pintado ---
     def paintEvent(self, ev):
         p = QPainter(self)
-        p.fillRect(ev.rect(), QColor(49, 54, 49))
+        p.fillRect(ev.rect(), QColor(255, 255, 255))
 
         if self._result is None:
             p.end(); return
