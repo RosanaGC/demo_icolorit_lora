@@ -273,11 +273,11 @@ class ZoomableImageView(QGraphicsView):
 class GamutFreeWindow(QWidget):
     def __init__(self, gamut_widget: GUIGamut, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("ab Gamut (free)")
+        self.setWindowTitle("Gamut")
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 8, 8, 8)
-        lay.addLayout(self._boxed(AspectRatioContainer(gamut_widget, 1.0), "ab Gamut (free)"))
+        lay.addLayout(self._boxed(AspectRatioContainer(gamut_widget, 1.0), "Gamut"))
         self.resize(320, 340)
 
     def _boxed(self, widget, title):
@@ -290,14 +290,14 @@ class GamutRefWindow(QWidget):
     def __init__(self, gamut_ref: GUIGamut, ref_view: QWidget,
                  ref_btn: QPushButton, used_palette: GUIPalette, color_push: QPushButton, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Reference / Gamut (reference) / Palette")
+        self.setWindowTitle("Reference Gamut")
         self.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         lay = QVBoxLayout(self); lay.setContentsMargins(8, 8, 8, 8)
         # referencia
         lay.addWidget(ref_view)
         row = QHBoxLayout(); row.addWidget(ref_btn); row.addStretch(1); lay.addLayout(row)
         # gamut ref
-        lay.addLayout(self._boxed(AspectRatioContainer(gamut_ref, 1.0), "ab Gamut (reference)"))
+        lay.addLayout(self._boxed(AspectRatioContainer(gamut_ref, 1.0), "Reference Gamut"))
         # paleta + color
         lay.addLayout(self._boxed(used_palette, 'Recently used colors'))
         lay.addLayout(self._boxed(color_push, 'Current Color'))

@@ -235,7 +235,8 @@ class UIControl:
         lab = skcolor.rgb2lab(rgb01.reshape(1, 1, 3)).reshape(3)
         self.last_user_ab = (float(lab[1]), float(lab[2]))
         # ---------------------------------------------------------------------------
-        self.userEdit.update_color(qcolor, userColor)
+        if self.userEdit is not None:
+            self.userEdit.update_color(qcolor, userColor)
 
     def update_painter(self, painter):
         for ue in self.userEdits:
