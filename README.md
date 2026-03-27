@@ -56,26 +56,11 @@ Atajos útiles:
 - `G`: toggle gray
 - `L`: load nueva imagen
 
-### Screenshots
-Para agregar screenshots:
-1. Guardalos en una carpeta `docs/` (ej: `docs/ui_main.png`, `docs/ui_gamut.png`).
-2. Actualizá esta sección con los paths reales.
-
-Ejemplo:
-- `docs/ui_main.png`
-- `docs/ui_gamut.png`
-
 ### Formatos soportados
 - Target: `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`
 - Reference: `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`
 
-### Notas importantes
-- `--model_path` debe apuntar a un archivo `.pth`, no a un directorio.
-- Si el modelo y el checkpoint no coinciden, la carga puede ser parcial (se usa `strict=False`).
 
-### Problemas comunes
-- Si la app crashea al cargar la imagen, revisá que el archivo exista y sea legible por OpenCV.
-- Si no ves cambios, probá con otra imagen de entrada y asegúrate de estar usando el `.pth` correcto.
 
 
 
