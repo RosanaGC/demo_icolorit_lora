@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from einops import rearrange
 from PyQt5.QtCore import QPoint, QSize, Qt, pyqtSignal, QRect
-from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QTransform
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPen, QTransform
 from PyQt5.QtWidgets import QApplication, QFileDialog, QWidget
 
 from skimage import color
@@ -82,6 +82,16 @@ class GUIDraw(QWidget):
 
         # ---- Carpeta de guardado (opcional) ----
         self.save_dir = None
+
+        # ---- Máscara / Region compositing ----
+        self.mask_tool        = None   # 'brush' | 'rect' | 'lasso' | None
+        self.region_mask      = None   # uint8 ndarray (win_h, win_w) o None
+        self.committed_canvas = None   # uint8 ndarray (win_h, win_w, 3) o None
+        self.mask_brush_size  = 20     # px en espacio de imagen (win_w × win_h)
+        self._mask_rect_start = None   # QPoint
+        self._mask_lasso_pts  = []     # list[QPoint]
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
 
     # -------------------- Helpers zoom/coords --------------------
     def _zoom_dims(self):
@@ -173,6 +183,14 @@ class GUIDraw(QWidget):
         self.im_mask0 = np.zeros((1, self.load_size, self.load_size))
         #self.brushWidth = 2 * self.scale
         self.brushWidth = 1.0
+
+        # Resetear máscara al cargar nueva imagen
+        self.region_mask      = None
+        self.committed_canvas = None
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
 
         # avisar geometría base (zoom=1) al resto de la UI
         self.canvas_geom_changed.emit(self.dw, self.dh, self.win_w, self.win_h, float(self.zoom))
@@ -274,6 +292,12 @@ class GUIDraw(QWidget):
         self.init_color()
         self._history.clear()
         self._redo.clear()
+        self.region_mask      = None
+        self.committed_canvas = None
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
         self.compute_result()
         self.update()
 
@@ -590,7 +614,19 @@ class GUIDraw(QWidget):
         pred_lab = np.concatenate((self.l_win[..., np.newaxis], ab_win), axis=2)
         pred_rgb = (np.clip(color.lab2rgb(pred_lab), 0, 1) * 255).astype('uint8')
         self.result = pred_rgb
-        self.update_result.emit(self.result)
+
+        # Compositing: si hay máscara activa, solo escribimos esa región al canvas acumulado
+        if self.region_mask is not None and np.any(self.region_mask):
+            if self.committed_canvas is None:
+                self.committed_canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
+            canvas = self.committed_canvas.copy()
+            m = self.region_mask.astype(bool)
+            canvas[m] = pred_rgb[m]
+            self.committed_canvas = canvas
+            self.update_result.emit(canvas)
+        else:
+            self.committed_canvas = pred_rgb.copy()
+            self.update_result.emit(pred_rgb)
         self.update()
 
     # -------------------- Pintado --------------------
@@ -614,12 +650,18 @@ class GUIDraw(QWidget):
             dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
             p.drawImage(QRect(dw_z, dh_z, ww_z, wh_z), qImg, QRect(0, 0, w, h))
 
+        # Overlay semitransparente de la máscara activa
+        self._draw_mask_overlay(p)
+
         # Hints en coords base con la afín de zoom
         sx, sy, tx, ty = self._affine_params()
         p.save()
         p.setWorldTransform(QTransform(sx, 0, 0, sy, tx, ty), combine=True)
         self.uiControl.update_painter(p)
         p.restore()
+
+        # Preview del tool de máscara en curso (rect/lasso)
+        self._draw_mask_preview(p)
         p.end()
 
     def sizeHint(self):
@@ -670,6 +712,8 @@ class GUIDraw(QWidget):
                 self._current_action["pos"] = (pos_base.x(), pos_base.y())
 
     def mouseReleaseEvent(self, event):
+        if self.handle_mask_release(event):
+            return
         if self._dragging and self._current_action and self.ui_mode == 'point' and self.pos is not None:
             if not self._current_action.get("pos"):
                 pos_base = self._to_base_coords(self.pos)
@@ -708,5 +752,161 @@ class GUIDraw(QWidget):
         act = self._redo.pop()
         self._history.append(act)
         self._replay_history()
+
+    # ── Máscara / Region compositing ─────────────────────────────────────────
+
+    def set_mask_tool(self, tool):
+        """Activa un tool de máscara: 'brush' | 'rect' | 'lasso' | None."""
+        self.mask_tool        = tool
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
+        self.update()
+
+    def clear_mask(self):
+        """Borra solo la máscara activa (canvas e hints se conservan)."""
+        self.region_mask      = None
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
+        self.update()
+
+    def _ensure_mask(self):
+        if not hasattr(self, 'win_h') or not hasattr(self, 'win_w'):
+            return
+        if self.region_mask is None:
+            self.region_mask = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+
+    def _widget_to_img(self, pos):
+        """Convierte posición en el widget (con zoom) a coords de imagen (win_w × win_h)."""
+        dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
+        x = int((pos.x() - dw_z) / max(1, ww_z) * self.win_w)
+        y = int((pos.y() - dh_z) / max(1, wh_z) * self.win_h)
+        return (max(0, min(self.win_w - 1, x)),
+                max(0, min(self.win_h - 1, y)))
+
+    def _paint_brush_mask(self, pos, erase=False):
+        self._ensure_mask()
+        x, y = self._widget_to_img(pos)
+        cv2.circle(self.region_mask, (x, y), max(1, self.mask_brush_size),
+                   0 if erase else 1, -1)
+        self.update()
+
+    def _fill_rect_mask(self, p1, p2):
+        self._ensure_mask()
+        x1, y1 = self._widget_to_img(p1)
+        x2, y2 = self._widget_to_img(p2)
+        x1, x2 = min(x1, x2), max(x1, x2)
+        y1, y2 = min(y1, y2), max(y1, y2)
+        self.region_mask[y1:y2 + 1, x1:x2 + 1] = 1
+        self.update()
+
+    def _fill_lasso_mask(self, pts):
+        if len(pts) < 3:
+            return
+        self._ensure_mask()
+        img_pts = np.array([self._widget_to_img(p) for p in pts], dtype=np.int32)
+        cv2.fillPoly(self.region_mask, [img_pts], 1)
+        self.update()
+
+    def _draw_mask_overlay(self, painter):
+        if self.region_mask is None or not np.any(self.region_mask):
+            return
+        if not hasattr(self, 'win_h') or not hasattr(self, 'win_w'):
+            return
+        dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
+        H, W = self.region_mask.shape
+        overlay = np.zeros((H, W, 4), dtype=np.uint8)
+        overlay[self.region_mask.astype(bool)] = [100, 149, 237, 90]
+        overlay_c = np.ascontiguousarray(overlay)
+        qimg = QImage(overlay_c.data, W, H, 4 * W, QImage.Format_RGBA8888)
+        painter.drawImage(QRect(dw_z, dh_z, ww_z, wh_z), qimg, QRect(0, 0, W, H))
+
+    def _draw_mask_preview(self, painter):
+        if not self.image_loaded:
+            return
+        if (self.mask_tool == 'rect' and self._mask_is_drawing
+                and self._mask_rect_start and self._mask_cursor_pos):
+            pen = QPen(QColor(100, 149, 237, 200), 2, Qt.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            p1, p2 = self._mask_rect_start, self._mask_cursor_pos
+            painter.drawRect(QRect(
+                min(p1.x(), p2.x()), min(p1.y(), p2.y()),
+                abs(p1.x() - p2.x()), abs(p1.y() - p2.y())
+            ))
+        elif self.mask_tool == 'lasso' and self._mask_lasso_pts:
+            pen = QPen(QColor(100, 149, 237, 200), 2, Qt.SolidLine)
+            painter.setPen(pen)
+            pts = self._mask_lasso_pts
+            for i in range(len(pts) - 1):
+                painter.drawLine(pts[i], pts[i + 1])
+            if self._mask_cursor_pos and self._mask_is_drawing:
+                painter.drawLine(pts[-1], self._mask_cursor_pos)
+
+    def handle_mask_press(self, event):
+        """Devuelve True si el evento fue consumido por el tool de máscara."""
+        if self.mask_tool is None or not self.image_loaded:
+            return False
+        pos = event.pos()
+        if self.mask_tool == 'brush':
+            if event.button() == Qt.LeftButton:
+                self._paint_brush_mask(pos, erase=False)
+            elif event.button() == Qt.RightButton:
+                self._paint_brush_mask(pos, erase=True)
+            return True
+        elif self.mask_tool == 'rect':
+            if event.button() == Qt.LeftButton:
+                self._mask_rect_start = pos
+                self._mask_is_drawing = True
+            elif event.button() == Qt.RightButton:
+                self._mask_rect_start = None
+                self._mask_is_drawing = False
+                self.update()
+            return True
+        elif self.mask_tool == 'lasso':
+            if event.button() == Qt.LeftButton:
+                if not self._mask_is_drawing:
+                    self._mask_lasso_pts = [pos]
+                    self._mask_is_drawing = True
+                else:
+                    self._mask_lasso_pts.append(pos)
+            elif event.button() == Qt.RightButton:
+                self._fill_lasso_mask(self._mask_lasso_pts)
+                self._mask_lasso_pts  = []
+                self._mask_is_drawing = False
+                self.update()
+            return True
+        return False
+
+    def handle_mask_move(self, event):
+        """Devuelve True si el evento fue consumido por el tool de máscara."""
+        if self.mask_tool is None:
+            return False
+        pos = event.pos()
+        self._mask_cursor_pos = pos
+        if self.mask_tool == 'brush':
+            if event.buttons() & Qt.LeftButton:
+                self._paint_brush_mask(pos, erase=False)
+            elif event.buttons() & Qt.RightButton:
+                self._paint_brush_mask(pos, erase=True)
+            return True
+        elif self.mask_tool in ('rect', 'lasso'):
+            self.update()
+            return True
+        return False
+
+    def handle_mask_release(self, event):
+        """Devuelve True si el evento fue consumido por el tool de máscara."""
+        if self.mask_tool is None:
+            return False
+        if (self.mask_tool == 'rect' and self._mask_is_drawing
+                and self._mask_rect_start and event.button() == Qt.LeftButton):
+            self._fill_rect_mask(self._mask_rect_start, event.pos())
+            self._mask_rect_start = None
+            self._mask_is_drawing = False
+        return True  # cualquier release mientras hay mask_tool activo se consume
 
 
