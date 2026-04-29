@@ -9,7 +9,8 @@ from PyQt5.QtGui import QPixmap, QImage, QTransform, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QCheckBox, QGroupBox, QHBoxLayout, QPushButton, QVBoxLayout,
     QWidget, QFileDialog, QSizePolicy, QApplication,
-    QGraphicsView, QGraphicsScene, QSplitter, QScrollArea, QFrame
+    QGraphicsView, QGraphicsScene, QSplitter, QScrollArea, QFrame,
+    QMenuBar, QMenu, QAction, QToolBar,
 )
 from PyQt5.QtCore import (
     Qt, QObject, QPoint, QSize, QRect, QEvent
@@ -285,6 +286,11 @@ class GamutFreeWindow(QWidget):
         v = QVBoxLayout(box); v.setContentsMargins(8, 8, 8, 8); v.addWidget(widget)
         out = QVBoxLayout(); out.addWidget(box); return out
 
+    # Close button hides instead of destroying — window can always be reopened.
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
+
 
 class GamutRefWindow(QWidget):
     def __init__(self, gamut_ref: GUIGamut, ref_view: QWidget,
@@ -307,6 +313,11 @@ class GamutRefWindow(QWidget):
         box = QGroupBox(title); box.setFlat(True)
         v = QVBoxLayout(box); v.setContentsMargins(8, 8, 8, 8); v.addWidget(widget)
         out = QVBoxLayout(); out.addWidget(box); return out
+
+    # Close button hides instead of destroying — window can always be reopened.
+    def closeEvent(self, event):
+        event.ignore()
+        self.hide()
 
 
 # ===================== UI principal =====================
@@ -339,11 +350,14 @@ class IColoriTUI(QWidget):
         center.addLayout(self._boxed(self.drawScroll, 'Drawing Pad', align=Qt.AlignCenter))
 
         drawPadMenu = QHBoxLayout()
-        self.bGray = QCheckBox("&Gray"); self.bGray.setToolTip('show gray-scale image')
-        self.bLoad = QPushButton('&Load'); self.bLoad.setToolTip('load an input image')
-        self.bSave = QPushButton("&Save"); self.bSave.setToolTip('Save the current result.')
+        self.bGray   = QCheckBox("&Gray");     self.bGray.setToolTip('show gray-scale image')
+        self.bLoad   = QPushButton('&Load');   self.bLoad.setToolTip('load an input image')
+        self.bSave   = QPushButton("&Save");   self.bSave.setToolTip('Save the current result.')
         self.bSaveAs = QPushButton("Save &As…"); self.bSaveAs.setToolTip('Choose where to save the result.')
-        for w in (self.bGray, self.bLoad, self.bSave, self.bSaveAs):
+        # Toggle buttons for the floating gamut windows (F1 / F2)
+        self.bGamut  = QPushButton("◑ Gamut"); self.bGamut.setToolTip('Show/hide Gamut window  (F1)')
+        self.bRef    = QPushButton("🖼 Ref");   self.bRef.setToolTip('Show/hide Reference Gamut window  (F2)')
+        for w in (self.bGray, self.bLoad, self.bSave, self.bSaveAs, self.bGamut, self.bRef):
             drawPadMenu.addWidget(w)
         center.addLayout(drawPadMenu)
 
@@ -439,6 +453,9 @@ class IColoriTUI(QWidget):
         self.bSaveAs.clicked.connect(lambda: self.drawWidget.save_result_as())
         self.bLoad.clicked.connect(self.load)
         self.ref_img_btn.clicked.connect(self.load_reference_image)
+        # Toggle gamut / reference windows
+        self.bGamut.clicked.connect(self._toggle_gamut_free)
+        self.bRef.clicked.connect(self._toggle_gamut_ref)
 
         # arranque
         self.start_t = time.time()
@@ -464,6 +481,21 @@ class IColoriTUI(QWidget):
             v.addWidget(widget, 0, align)
         out = QVBoxLayout(); out.addWidget(box)
         return out
+
+    # ---------- Toggle floating windows ----------
+    def _toggle_gamut_free(self):
+        if self.win_gamut_free.isVisible():
+            self.win_gamut_free.hide()
+        else:
+            self.win_gamut_free.show()
+            self.win_gamut_free.raise_()
+
+    def _toggle_gamut_ref(self):
+        if self.win_gamut_ref.isVisible():
+            self.win_gamut_ref.hide()
+        else:
+            self.win_gamut_ref.show()
+            self.win_gamut_ref.raise_()
 
     # ---------- Acciones ----------
     def nextImage(self): self.drawWidget.nextImage()
@@ -494,12 +526,13 @@ class IColoriTUI(QWidget):
     def load(self): self.drawWidget.load_image()
 
     def closeEvent(self, event):
-        # Cerrar también las ventanas flotantes
+        # Realmente destruir las ventanas flotantes solo cuando cierra la app.
         try:
-            if self.win_gamut_free is not None:
-                self.win_gamut_free.close()
-            if self.win_gamut_ref is not None:
-                self.win_gamut_ref.close()
+            for w in (self.win_gamut_free, self.win_gamut_ref):
+                if w is not None:
+                    w.blockSignals(True)
+                    w.setAttribute(Qt.WA_DeleteOnClose, False)
+                    w.destroy()
         finally:
             super().closeEvent(event)
 
@@ -513,6 +546,9 @@ class IColoriTUI(QWidget):
         if event.key() == Qt.Key_S and not (event.modifiers() & Qt.ShiftModifier): self.save()
         if event.key() == Qt.Key_G: self.bGray.toggle()
         if event.key() == Qt.Key_L: self.load()
+        # F1 = toggle Gamut Free,  F2 = toggle Reference Gamut
+        if event.key() == Qt.Key_F1: self._toggle_gamut_free()
+        if event.key() == Qt.Key_F2: self._toggle_gamut_ref()
 
         # Zoom rápido en Drawing Pad
         if event.key() in (Qt.Key_Plus, Qt.Key_Equal):      self.drawWidget.zoom_in()

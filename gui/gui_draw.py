@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from einops import rearrange
 from PyQt5.QtCore import QPoint, QSize, Qt, pyqtSignal, QRect
-from PyQt5.QtGui import QColor, QImage, QPainter, QTransform
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QTransform
 from PyQt5.QtWidgets import QApplication, QFileDialog, QWidget
 
 from skimage import color
@@ -596,10 +596,16 @@ class GUIDraw(QWidget):
     # -------------------- Pintado --------------------
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(event.rect(), QColor(255, 255, 255))
+        p.fillRect(event.rect(), QColor(30, 30, 46))
+        if not self.image_loaded:
+            p.setPen(QColor(69, 71, 90))
+            p.setFont(QFont("Arial", 14))
+            p.drawText(event.rect(), Qt.AlignCenter, "Drop an image here\nor use  📂 Load")
+            p.end()
+            return
         p.setRenderHint(QPainter.Antialiasing)
 
-        im = self.gray_win if (self.use_gray or self.result is None) else self.result
+        im = getattr(self, 'gray_win', None) if (self.use_gray or self.result is None) else self.result
         if im is not None:
             im_c = np.ascontiguousarray(im, dtype=np.uint8)  # asegurar strides
             h, w = im_c.shape[:2]

@@ -30,7 +30,10 @@ class GUIDrawGTHints(GUIDraw):
     def change_color(self, pos=None):
         if pos is None:
             return
-        self._set_gt_hint_from_pos(pos)
+        if getattr(self, 'gt_mode', False):
+            self._set_gt_hint_from_pos(pos)
+        else:
+            super().change_color(pos)
 
     def _emit_used_colors(self):
         used_colors = self.uiControl.used_colors()
