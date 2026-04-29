@@ -1,0 +1,69 @@
+name: Build Windows exe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install CPU-only torch
+        timeout-minutes: 20
+        run: |
+          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install dependencies
+        timeout-minutes: 15
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Convert icon
+        run: |
+          python -c "from PIL import Image; img=Image.open('gui/icon.png'); img.save('gui/icon.ico')"
+        continue-on-error: true
+
+      - name: Patch spec to use icon.ico
+        shell: pwsh
+        run: |
+          (Get-Content icolorit_v2.spec) `
+            -replace "# icon='gui/icon.ico'", "icon='gui/icon.ico'" |
+          Set-Content icolorit_v2.spec
+        continue-on-error: true
+
+      - name: Build with PyInstaller
+        timeout-minutes: 30
+        run: |
+          pyinstaller icolorit_v2.spec --noconfirm --clean
+
+      - name: Create checks placeholder
+        run: |
+          mkdir dist\iColoriT_LoRA\checks
+          echo Copy your .pth checkpoint files here > dist\iColoriT_LoRA\checks\README.txt
+
+      - name: Create launcher
+        shell: cmd
+        run: |
+          (
+            echo @echo off
+            echo REM  iColoriT LoRA Launcher
+            echo.
+            echo iColoriT_LoRA.exe
+          ) > dist\iColoriT_LoRA\run_icolorit.bat
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iColoriT_LoRA_windows
+          path: dist\iColoriT_LoRA\
+          retention-days: 7

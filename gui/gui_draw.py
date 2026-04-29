@@ -8,12 +8,12 @@ import numpy as np
 import torch
 from einops import rearrange
 from PyQt5.QtCore import QPoint, QSize, Qt, pyqtSignal, QRect
-from PyQt5.QtGui import QColor, QImage, QPainter, QTransform
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QTransform
 from PyQt5.QtWidgets import QApplication, QFileDialog, QWidget
 
 from skimage import color
 
-from .lab_gamut import snap_ab
+from .lab_gamut import lab2rgb_1d, snap_ab
 from .ui_control import UIControl
 
 
@@ -227,7 +227,13 @@ class GUIDraw(QWidget):
         is_predict = False
 
         # Color “snap” usando L local (scale_point ya contempla zoom)
-        snap_qcolor = self.calibrate_color(self.user_color, self.pos)
+        if self._exact_hint_ab is not None:
+            x, y = self.scale_point(self.pos)
+            lab = np.array([self.im_l[y, x], self._exact_hint_ab[0], self._exact_hint_ab[1]], dtype=np.float32)
+            exact_rgb = lab2rgb_1d(lab, clip=True, dtype='uint8')
+            snap_qcolor = QColor(int(exact_rgb[0]), int(exact_rgb[1]), int(exact_rgb[2]))
+        else:
+            snap_qcolor = self.calibrate_color(self.user_color, self.pos)
         self.color = snap_qcolor
         self.update_color.emit(str('background-color: %s' % self.color.name()))
 
@@ -237,10 +243,14 @@ class GUIDraw(QWidget):
         if self.ui_mode == 'point':
             if move_point:
                 self.uiControl.movePoint(pos_base, snap_qcolor, self.user_color, self.brushWidth)
+                self.uiControl.update_exact_ab(self._exact_hint_ab)
             else:
-                self.user_color, self.brushWidth, isNew = self.uiControl.addPoint(
+                self.user_color, self.brushWidth, exact_ab, isNew = self.uiControl.addPoint(
                     pos_base, snap_qcolor, self.user_color, self.brushWidth
                 )
+                if exact_ab is not None:
+                    self._exact_hint_ab = exact_ab
+                self.uiControl.update_exact_ab(self._exact_hint_ab)
                 if isNew:
                     is_predict = True
 
@@ -286,6 +296,7 @@ class GUIDraw(QWidget):
     def init_color(self):
         self.user_color = QColor(128, 128, 128)  # gris por defecto
         self.color = self.user_color
+        self._exact_hint_ab = None
 
     def change_color(self, pos=None):
         if pos is not None:
@@ -311,10 +322,23 @@ class GUIDraw(QWidget):
         # llamada desde el gamut: si no hay self.pos, evitamos crash
         c = QColor(int(c_rgb[0]), int(c_rgb[1]), int(c_rgb[2]))
         self.user_color = c
+        self._exact_hint_ab = None
         snap_qcolor = c if self.pos is None else self.calibrate_color(c, self.pos)
         self.color = snap_qcolor
         self.update_color.emit(str('background-color: %s' % self.color.name()))
         self.uiControl.update_color(snap_qcolor, self.user_color)
+        self.compute_result()
+        self.update()
+
+    def set_color_from_lab(self, payload):
+        rgb = np.array(payload["rgb"], dtype=np.uint8)
+        lab = np.array(payload["lab"], dtype=np.float32)
+        self.user_color = QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self.color = QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self._exact_hint_ab = (float(lab[1]), float(lab[2]))
+        self.update_color.emit(str('background-color: %s' % self.color.name()))
+        self.uiControl.update_color(self.color, self.user_color)
+        self.uiControl.update_exact_ab(self._exact_hint_ab)
         self.compute_result()
         self.update()
 
@@ -543,6 +567,9 @@ class GUIDraw(QWidget):
         self.im_mask0 = im_mask0.transpose((2, 0, 1))  # (1,H,W)
         im_lab = color.rgb2lab(im).transpose((2, 0, 1))  # (3,H,W)
         self.im_ab0 = im_lab[1:3, :, :]
+        hint_ab = self.uiControl.get_hint_ab_map(self.load_size, self.load_size)
+        if hint_ab is not None:
+            self.im_ab0 = hint_ab
 
         _im_lab = self.im_lab.transpose((2, 0, 1))
         _im_lab = np.concatenate(((_im_lab[[0], :, :] - 50) / 100, _im_lab[1:, :, :] / 110), axis=0)
@@ -569,10 +596,16 @@ class GUIDraw(QWidget):
     # -------------------- Pintado --------------------
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(event.rect(), QColor(255, 255, 255))
+        p.fillRect(event.rect(), QColor(30, 30, 46))
+        if not self.image_loaded:
+            p.setPen(QColor(69, 71, 90))
+            p.setFont(QFont("Arial", 14))
+            p.drawText(event.rect(), Qt.AlignCenter, "Drop an image here\nor use  📂 Load")
+            p.end()
+            return
         p.setRenderHint(QPainter.Antialiasing)
 
-        im = self.gray_win if (self.use_gray or self.result is None) else self.result
+        im = getattr(self, 'gray_win', None) if (self.use_gray or self.result is None) else self.result
         if im is not None:
             im_c = np.ascontiguousarray(im, dtype=np.uint8)  # asegurar strides
             h, w = im_c.shape[:2]
