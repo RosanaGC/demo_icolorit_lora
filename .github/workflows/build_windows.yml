@@ -1,11 +1,12 @@
 name: Build Windows exe
 
 on:
-  workflow_dispatch:   # manual trigger from GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repo
@@ -17,10 +18,12 @@ jobs:
           python-version: "3.10"
 
       - name: Install CPU-only torch
+        timeout-minutes: 20
         run: |
           pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install dependencies
+        timeout-minutes: 15
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
@@ -39,6 +42,7 @@ jobs:
         continue-on-error: true
 
       - name: Build with PyInstaller
+        timeout-minutes: 30
         run: |
           pyinstaller icolorit_v2.spec --noconfirm --clean
 
@@ -52,7 +56,7 @@ jobs:
         run: |
           (
             echo @echo off
-            echo REM  iColoriT LoRA Launcher — edit paths if needed
+            echo REM  iColoriT LoRA Launcher
             echo.
             echo iColoriT_LoRA.exe
           ) > dist\iColoriT_LoRA\run_icolorit.bat

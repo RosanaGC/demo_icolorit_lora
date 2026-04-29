@@ -77,9 +77,6 @@ hidden = [
     "gui.lab_gamut",
 ]
 
-# Collect all timm submodules (model zoo)
-hidden += collect_submodules("timm")
-hidden += collect_submodules("skimage")
 
 # ── Analysis ──────────────────────────────────────────────────────────────────
 a = Analysis(
