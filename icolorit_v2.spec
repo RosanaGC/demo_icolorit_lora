@@ -30,6 +30,8 @@ added_datas = [
     *collect_data_files("cv2"),
     # einops
     *collect_data_files("einops"),
+    # numpy data files (fixes "C extensions failed" on Windows)
+    *collect_data_files("numpy"),
 ]
 
 # ── Hidden imports ────────────────────────────────────────────────────────────
@@ -60,6 +62,23 @@ hidden = [
     "PyQt5.QtCore",
     "PyQt5.QtGui",
     "PyQt5.QtWidgets",
+    # numpy C extensions (fixes "imported numpy-c extensions failed" on Windows)
+    "numpy",
+    "numpy.core",
+    "numpy.core._multiarray_umath",
+    "numpy.core.multiarray",
+    "numpy.core._multiarray_tests",
+    "numpy.core._operand_flag_tests",
+    "numpy.core._rational_tests",
+    "numpy.core._struct_ufunc_tests",
+    "numpy.core._umath_tests",
+    "numpy.random",
+    "numpy.random._common",
+    "numpy.random._bounded_integers",
+    "numpy.random._mt19937",
+    "numpy.random.mtrand",
+    "numpy.linalg",
+    "numpy.linalg._umath_linalg",
     # scipy / sklearn (skimage deps)
     "scipy",
     "scipy.ndimage",
@@ -119,7 +138,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,          # no console window on Windows
+    console=True,           # True para ver errores; cambiar a False en release final
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
