@@ -27,6 +27,7 @@ from .gui_draw_gt import GUIDrawGTHints
 from .gui_gamut import GUIGamut
 from .gui_palette import GUIPalette
 from .gui_vis import GUI_VIS
+from .gui_main import MagnifierOverlay, HoverZoomFilter
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -196,124 +197,6 @@ QLabel#section_title {
 # Small helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _np_to_qpix(arr: np.ndarray) -> QPixmap:
-    h, w = arr.shape[:2]
-    qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888)
-    return QPixmap.fromImage(qimg)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Gamut magnifier (used on hover over gamut widgets)
-# ──────────────────────────────────────────────────────────────────────────────
-class MagnifierOverlay(QWidget):
-    """Floating loupe that zooms into the gamut widget under the cursor."""
-    def __init__(self, parent=None, size=420, zoom=16.0):
-        super().__init__(parent)
-        self.size = int(size)
-        self.zoom = float(zoom)
-        self.min_zoom = 2.0;  self.max_zoom = 200.0
-        self.pixel_zoom_threshold = 8.0
-        self.min_size = 160;  self.max_size = 900
-        self.show_grid = True
-        self.cross_len = 14
-        self.cell_fill    = QColor(255, 255, 255, 40)
-        self.cell_border1 = QPen(QColor(255, 255, 255, 220), 2)
-        self.cell_border2 = QPen(QColor(0, 0, 0, 220), 1)
-        self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.resize(self.size, self.size)
-        self._pm = None
-        self._piece_rect = QRect()
-        self._cell_rect  = QRect()
-        self._step_x = 1.0
-        self._step_y = 1.0
-
-    def set_zoom(self, z):
-        self.zoom = max(self.min_zoom, min(self.max_zoom, float(z)))
-
-    def set_size(self, s):
-        self.size = max(self.min_size, min(self.max_size, int(s)))
-        self.resize(self.size, self.size); self.update()
-
-    def update_from_widget(self, src_widget, local_pos):
-        w = max(1, int(self.size / self.zoom))
-        h = max(1, int(self.size / self.zoom))
-        x = max(0, local_pos.x() - w // 2)
-        y = max(0, local_pos.y() - h // 2)
-        rect = QRect(x, y, w, h).intersected(src_widget.rect())
-        if rect.isEmpty(): return
-        piece = src_widget.grab(rect)
-        mode = Qt.FastTransformation if self.zoom >= self.pixel_zoom_threshold else Qt.SmoothTransformation
-        pm_scaled = piece.scaled(self.size, self.size, Qt.KeepAspectRatio, mode)
-        off_x = (self.width()  - pm_scaled.width())  // 2
-        off_y = (self.height() - pm_scaled.height()) // 2
-        self._pm = pm_scaled
-        self._piece_rect = QRect(off_x, off_y, pm_scaled.width(), pm_scaled.height())
-        self._step_x = pm_scaled.width()  / max(1, rect.width())
-        self._step_y = pm_scaled.height() / max(1, rect.height())
-        dx = float(local_pos.x() - rect.x())
-        dy = float(local_pos.y() - rect.y())
-        cell_x = int(np.floor(dx * self._step_x))
-        cell_y = int(np.floor(dy * self._step_y))
-        self._cell_rect = QRect(
-            self._piece_rect.left() + cell_x, self._piece_rect.top() + cell_y,
-            max(1, int(round(self._step_x))), max(1, int(round(self._step_y)))
-        )
-        self.move(src_widget.mapToGlobal(local_pos) + QPoint(16, 16))
-        self.show(); self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-        if self._pm is not None and not self._piece_rect.isEmpty():
-            p.drawPixmap(self._piece_rect, self._pm)
-            if self.show_grid and self.zoom >= self.pixel_zoom_threshold:
-                p.setPen(QPen(QColor(0, 0, 0, 40), 1))
-                x0, y0 = self._piece_rect.left(), self._piece_rect.top()
-                for i in range(int(round(self._pm.width() / self._step_x)) + 1):
-                    gx = int(round(x0 + i * self._step_x))
-                    p.drawLine(gx, y0, gx, y0 + self._piece_rect.height())
-                for j in range(int(round(self._pm.height() / self._step_y)) + 1):
-                    gy = int(round(y0 + j * self._step_y))
-                    p.drawLine(x0, gy, x0 + self._piece_rect.width(), gy)
-            if not self._cell_rect.isEmpty():
-                p.fillRect(self._cell_rect, self.cell_fill)
-                p.setPen(self.cell_border1); p.drawRect(self._cell_rect.adjusted(0,0,-1,-1))
-                p.setPen(self.cell_border2); p.drawRect(self._cell_rect.adjusted(1,1,-2,-2))
-        cx, cy = self.width() // 2, self.height() // 2
-        L = max(self.cross_len, int(self.size * 0.035))
-        p.setPen(QPen(QColor(255, 255, 255, 230), 3))
-        p.drawLine(cx-L, cy, cx+L, cy); p.drawLine(cx, cy-L, cx, cy+L)
-        p.setPen(QPen(QColor(0, 0, 0, 220), 1))
-        p.drawLine(cx-L, cy, cx+L, cy); p.drawLine(cx, cy-L, cx, cy+L)
-        p.end()
-
-
-class HoverZoomFilter(QObject):
-    """Event filter that shows MagnifierOverlay when hovering over a widget."""
-    def __init__(self, owner_widget, overlay):
-        super().__init__(owner_widget)
-        self.owner = owner_widget
-        self.overlay = overlay
-        self.owner.setMouseTracking(True)
-
-    def eventFilter(self, obj, ev):
-        t = ev.type()
-        if t == QEvent.Leave:
-            self.overlay.hide(); return False
-        if t == QEvent.MouseMove:
-            self.overlay.update_from_widget(self.owner, ev.pos()); return False
-        if t == QEvent.Wheel:
-            dy = ev.angleDelta().y() if hasattr(ev, "angleDelta") else 0
-            if dy == 0 and hasattr(ev, "pixelDelta"): dy = ev.pixelDelta().y()
-            if dy == 0: return False
-            if ev.modifiers() & Qt.ShiftModifier:
-                self.overlay.set_size(self.overlay.size + (40 if dy > 0 else -40))
-            else:
-                step = 1.45 if (ev.modifiers() & Qt.ControlModifier) else 1.20
-                self.overlay.set_zoom(self.overlay.zoom * (step if dy > 0 else 1/step))
-            self.overlay.update_from_widget(self.owner, ev.pos() if hasattr(ev, "pos") else QPoint(0,0))
-            return True
-        return False
     h, w = arr.shape[:2]
     qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888)
     return QPixmap.fromImage(qimg)
