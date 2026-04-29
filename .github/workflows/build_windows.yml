@@ -56,9 +56,17 @@ jobs:
         run: |
           (
             echo @echo off
-            echo REM  iColoriT LoRA Launcher
-            echo.
-            echo iColoriT_LoRA.exe
+            echo REM  iColoriT LoRA — Debug Launcher
+            echo echo Starting iColoriT LoRA...
+            echo iColoriT_LoRA.exe ^> icolorit_log.txt 2^>^&1
+            echo set EXIT_CODE=%%errorlevel%%
+            echo if %%EXIT_CODE%% neq 0 (
+            echo     echo.
+            echo     echo === ERROR — exit code %%EXIT_CODE%% ===
+            echo     type icolorit_log.txt
+            echo     echo.
+            echo     pause
+            echo ^)
           ) > dist\iColoriT_LoRA\run_icolorit.bat
 
       - name: Upload artifact
