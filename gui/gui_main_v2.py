@@ -803,6 +803,32 @@ class IColoriTUIv2(QMainWindow):
         self._brushLabel = QLabel("8")
         self._brushLabel.setFixedWidth(24)
         tb.addWidget(self._brushLabel)
+        tb.addSeparator()
+
+        # Mask tools
+        tb.addWidget(QLabel("Mask:"))
+        self._actMaskBrush = _act("✏ Brush", "Pintar máscara  ·  Izq=pintar  Der=borrar",
+                                  lambda checked: self._set_mask_tool('brush' if checked else None),
+                                  checkable=True)
+        self._actMaskRect  = _act("⬜ Rect",  "Máscara rectangular  ·  arrastrar",
+                                  lambda checked: self._set_mask_tool('rect' if checked else None),
+                                  checkable=True)
+        self._actMaskLasso = _act("🔷 Lasso", "Máscara libre  ·  Izq=punto  Der=cerrar y rellenar",
+                                  lambda checked: self._set_mask_tool('lasso' if checked else None),
+                                  checkable=True)
+        _act("✕ Mask", "Borrar máscara activa (canvas e hints se conservan)",
+             self._clear_mask_action)
+        tb.addSeparator()
+        tb.addWidget(QLabel("Mask sz:"))
+        self._maskSzSlider = QSlider(Qt.Horizontal)
+        self._maskSzSlider.setRange(3, 120)
+        self._maskSzSlider.setValue(20)
+        self._maskSzSlider.setFixedWidth(80)
+        self._maskSzSlider.setToolTip("Tamaño del brush de máscara")
+        self._maskSzSlider.valueChanged.connect(
+            lambda v: setattr(self.drawWidget, 'mask_brush_size', v)
+        )
+        tb.addWidget(self._maskSzSlider)
 
     # ── Status bar ────────────────────────────────────────────────────────────
     def _build_status_bar(self):
@@ -1137,7 +1163,7 @@ class IColoriTUIv2(QMainWindow):
         self._refZoomSlider.blockSignals(False)
 
     def _sync_vis_size(self, dw, dh, ww, wh, zoom):
-        """Keep visWidget exactly the same pixel size as GUIDraw so result aligns."""
+        """Mantiene visWidget del mismo tamaño que el drawing pad."""
         if not hasattr(self.drawWidget, "win_size"):
             return
         side = int(round(self.drawWidget.win_size * zoom))
@@ -1236,10 +1262,26 @@ class IColoriTUIv2(QMainWindow):
                 seen.add(key)
                 palette_colors.append(list(h["user_rgb"]))
 
+        # ── Guardar committed_canvas (resultado acumulado de regiones) ────────
+        canvas_basename = ""
+        if dw.committed_canvas is not None:
+            canvas_path = path.replace(".iclr", "_canvas.png")
+            _cv2.imwrite(canvas_path, _cv2.cvtColor(dw.committed_canvas, _cv2.COLOR_RGB2BGR))
+            canvas_basename = os.path.basename(canvas_path)
+
+        # ── Guardar region_mask activa (si existe) ────────────────────────────
+        mask_basename = ""
+        if dw.region_mask is not None and np.any(dw.region_mask):
+            mask_path = path.replace(".iclr", "_region_mask.png")
+            _cv2.imwrite(mask_path, dw.region_mask * 255)
+            mask_basename = os.path.basename(mask_path)
+
         session = {
-            "version":          "1.1",
+            "version":          "1.2",
             "original_path":    getattr(dw, 'image_file', ''),
             "target_png":       os.path.basename(png_path),
+            "canvas_png":       canvas_basename,
+            "region_mask_png":  mask_basename,
             "brightness":       0,    # adjustments are baked into target_png
             "contrast":         100,
             "palette_colors":   palette_colors,
@@ -1327,6 +1369,33 @@ class IColoriTUIv2(QMainWindow):
         self.drawWidget._history = history
         self.drawWidget._redo.clear()
         self.drawWidget._replay_history()
+
+        dw = self.drawWidget
+
+        # ── Restaurar committed_canvas ────────────────────────────────────────
+        canvas_png = session.get("canvas_png", "")
+        canvas_path = os.path.join(session_dir, canvas_png)
+        if canvas_png and os.path.exists(canvas_path):
+            canvas_bgr = _cv2.imread(canvas_path)
+            if canvas_bgr is not None:
+                canvas_rgb = _cv2.cvtColor(canvas_bgr, _cv2.COLOR_BGR2RGB)
+                if canvas_rgb.shape[:2] != (dw.win_h, dw.win_w):
+                    canvas_rgb = _cv2.resize(canvas_rgb, (dw.win_w, dw.win_h),
+                                             interpolation=_cv2.INTER_CUBIC)
+                dw.committed_canvas = canvas_rgb
+                dw.update_result.emit(canvas_rgb)
+
+        # ── Restaurar region_mask ─────────────────────────────────────────────
+        mask_png = session.get("region_mask_png", "")
+        mask_path = os.path.join(session_dir, mask_png)
+        if mask_png and os.path.exists(mask_path):
+            mask_gray = _cv2.imread(mask_path, _cv2.IMREAD_GRAYSCALE)
+            if mask_gray is not None:
+                if mask_gray.shape != (dw.win_h, dw.win_w):
+                    mask_gray = _cv2.resize(mask_gray, (dw.win_w, dw.win_h),
+                                            interpolation=_cv2.INTER_NEAREST)
+                dw.region_mask = (mask_gray > 128).astype(np.uint8)
+                dw.update()
 
         # Restore palette explicitly from saved colors
         pal = session.get("palette_colors")
@@ -1441,9 +1510,28 @@ class IColoriTUIv2(QMainWindow):
         self._contrastVal.setText("1.00×")
         self._btnResetBC.setEnabled(False)
 
+    def _zoom_draw_to_fit(self):
+        """Ajusta el zoom para que el canvas llene el scroll area disponible."""
+        vp = self.drawScroll.viewport()
+        vw, vh = vp.width(), vp.height()
+        dw = self.drawWidget
+        if not hasattr(dw, 'win_size') or dw.win_size == 0 or vw == 0 or vh == 0:
+            return
+        z = min(vw / dw.win_size, vh / dw.win_size)
+        z = max(dw.min_zoom, min(dw.max_zoom, z))
+        dw.set_zoom(z)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if getattr(self.drawWidget, 'image_loaded', False):
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(80, self._zoom_draw_to_fit)
+
     def _load(self):
         self.drawWidget.load_image()
         self._clear_L_cal_originals()
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(50, self._zoom_draw_to_fit)
         self._statusMsg.setText("Image loaded")
 
     def _save(self):
@@ -1453,6 +1541,22 @@ class IColoriTUIv2(QMainWindow):
     def _save_as(self):
         self.drawWidget.save_result_as()
 
+    def _set_mask_tool(self, tool):
+        self.drawWidget.set_mask_tool(tool)
+        self._actMaskBrush.setChecked(tool == 'brush')
+        self._actMaskRect.setChecked(tool == 'rect')
+        self._actMaskLasso.setChecked(tool == 'lasso')
+        msgs = {
+            'brush': "Mask Brush activo  ·  Izq=pintar  Der=borrar",
+            'rect':  "Mask Rect activo  ·  arrastrar para definir región  ·  Der=cancelar",
+            'lasso': "Mask Lasso activo  ·  Izq=agregar punto  ·  Der=cerrar y rellenar",
+        }
+        self._statusMsg.setText(msgs.get(tool, "Mask tool desactivado"))
+
+    def _clear_mask_action(self):
+        self.drawWidget.clear_mask()
+        self._statusMsg.setText("Máscara borrada  ·  canvas e hints conservados")
+
     def _reset(self):
         self.visWidget.reset()
         self.gamutFree.reset()
@@ -1460,6 +1564,7 @@ class IColoriTUIv2(QMainWindow):
         self.gamutRef.reference_mask = None
         self.palette.reset()
         self.drawWidget.reset()
+        self._set_mask_tool(None)
         self._hintCount.setText("Hints: 0")
         self._statusMsg.setText("Reset")
         self.colorSwatch.set_from_stylesheet("background-color: grey")
@@ -1696,6 +1801,8 @@ class IColoriTUIv2(QMainWindow):
         self.drawWidget.ui_mode = "none"
         self.drawWidget.save_dir = None
         self.drawWidget.init_result(path)
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(50, self._zoom_draw_to_fit)
         self._hintCount.setText("Hints: 0")
         self._statusMsg.setText(f"Loaded: {os.path.basename(path)}")
 

@@ -33,6 +33,7 @@
 | 1.8 | **Fix: ventanas Gamut → close = hide** (reapertura siempre disponible) | ✅ | `gui/gui_main.py` |
 | 1.9 | Menú View en ambas versiones (show/hide paneles) | ✅ | |
 | 1.10 | Color Swatch visual animado | ✅ | |
+| 1.11 | **Fix: session save/load** — PNG full-res + canal L (BC + calibración) guardados correctamente | ✅ | `gui/gui_main_v2.py` |
 
 ---
 
@@ -46,10 +47,11 @@
 | 2.2 | `build_windows.bat` — script de build + lanzador | ✅ | |
 | 2.3 | `icolorit_macos.spec` — PyInstaller spec macOS | ✅ | `.app` bundle |
 | 2.4 | `build_macos.sh` — script de build + DMG | ✅ | |
-| 2.5 | Icono `.ico` (Windows) y `.icns` (macOS) | 📋 | Convertir `gui/icon.png` |
-| 2.6 | Firma de código macOS (`codesign`) | 📋 | Requiere Apple Developer ID |
-| 2.7 | Testar ejecutable Windows (máquina limpia) | 📋 | |
-| 2.8 | Testar `.app` macOS (máquina limpia) | 📋 | |
+| 2.5 | Workflow GitHub Actions para build Windows CPU-only (`workflow_dispatch`) | ✅ | `.github/workflows/build_windows.yml` |
+| 2.6 | Icono `.ico` (Windows) y `.icns` (macOS) | 📋 | Convertir `gui/icon.png` |
+| 2.7 | Firma de código macOS (`codesign`) | 📋 | Requiere Apple Developer ID |
+| 2.8 | Testar ejecutable Windows (máquina limpia) | 📋 | |
+| 2.9 | Testar `.app` macOS (máquina limpia) | 📋 | |
 
 ---
 
@@ -141,4 +143,4 @@ Phases 3 y 5 pueden avanzar en paralelo. Phase 4 necesita Phase 3 completa para 
 
 ---
 
-*Última actualización: 2026-04-28*
+*Última actualización: 2026-04-29*

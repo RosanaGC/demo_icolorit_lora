@@ -173,6 +173,8 @@ class GUIDrawGTHints(GUIDraw):
         return added
 
     def mousePressEvent(self, event):
+        if self.handle_mask_press(event):
+            return
         pos = self.valid_point(event.pos())
         if pos is not None:
             if event.button() == Qt.LeftButton:
@@ -200,6 +202,8 @@ class GUIDrawGTHints(GUIDraw):
                 self.compute_result()
 
     def mouseMoveEvent(self, event):
+        if self.handle_mask_move(event):
+            return
         self.pos = self.valid_point(event.pos())
         if self.pos is not None and self.ui_mode == 'point':
             self.change_color(self.pos)
