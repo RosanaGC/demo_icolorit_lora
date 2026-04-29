@@ -416,8 +416,8 @@ class IColoriTUI(QWidget):
         self.drawWidget.update_gammut.connect(self.gamutWidgetFree.set_gamut)
         self.drawWidget.update_ab.connect(self.gamutWidgetFree.set_ab)
         self.drawWidget.update_ab.connect(self.gamutWidgetRef.set_ab)
-        self.gamutWidgetFree.update_color.connect(self.drawWidget.set_color)
-        self.gamutWidgetRef.update_color.connect(self.drawWidget.set_color)
+        self.gamutWidgetFree.update_lab.connect(self.drawWidget.set_color_from_lab)
+        self.gamutWidgetRef.update_lab.connect(self.drawWidget.set_color_from_lab)
 
         # recorte por L para referencia
         self.drawWidget.update_ab.connect(

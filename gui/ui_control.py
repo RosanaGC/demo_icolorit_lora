@@ -43,6 +43,7 @@ class PointEdit(UserEdit):
         self._hint_ab = []  # lista de (a, b) float por píxel
         self._hw_cache = None  # (H, W) del último get_input
         self._hints = []  # lista [(y0,y1,x0,x1,a,b), ...]
+        self.exact_ab = None
 
     def add(self, pnt, color, userColor, width, ui_count):
         self.pnt = pnt
@@ -54,11 +55,18 @@ class PointEdit(UserEdit):
     def select_old(self, pnt, ui_count):
         self.pnt = pnt
         self.ui_count = ui_count
-        return self.userColor, self.width
+        return self.userColor, self.width, self.exact_ab
 
     def update_color(self, qcolor, userColor):
         self.color = qcolor
         self.userColor = userColor
+        self.exact_ab = None
+
+    def update_exact_ab(self, ab):
+        if ab is None:
+            self.exact_ab = None
+            return
+        self.exact_ab = (float(ab[0]), float(ab[1]))
 
     def updateInput(self, im, mask, vis_im):
         w = int(self.width / self.scale)
@@ -81,7 +89,7 @@ class PointEdit(UserEdit):
         # --- NUEVO: recordar (a,b) del hint en coordenadas (x,y) -> guardamos (y,x) ---
         # mask shape puede ser (H, W, 1) o (H, W); tomamos H, W del propio mask
         H, W = mask.shape[:2]
-        self._remember_hint(tl, br, self.userColor, hw=(H, W))
+        self._remember_hint(tl, br, self.userColor, hw=(H, W), exact_ab=self.exact_ab)
 
     def is_same(self, pnt):
         dx = abs(self.pnt.x() - pnt.x())
@@ -128,7 +136,7 @@ class PointEdit(UserEdit):
         lab = skcolor.rgb2lab(rgb)  # (1,1,3) -> L,a,b
         return float(lab[0, 0, 1]), float(lab[0, 0, 2])
 
-    def _remember_hint(self, tl, br, userQColor, hw):
+    def _remember_hint(self, tl, br, userQColor, hw, exact_ab=None):
         """Guarda coordenadas (y,x) y (a,b) para el rectángulo tl..br."""
         H, W = hw
         if self._hw_cache != (H, W):
@@ -137,11 +145,14 @@ class PointEdit(UserEdit):
             self._hints = []
             self._hw_cache = (H, W)
 
-        # QColor -> Lab -> (a,b)
-        rgb01 = np.array([userQColor.red(), userQColor.green(), userQColor.blue()], dtype=np.float32) / 255.0
-        lab = skcolor.rgb2lab(rgb01.reshape(1, 1, 3)).reshape(3)
-        a_val = float(lab[1])
-        b_val = float(lab[2])
+        if exact_ab is not None:
+            a_val = float(exact_ab[0])
+            b_val = float(exact_ab[1])
+        else:
+            rgb01 = np.array([userQColor.red(), userQColor.green(), userQColor.blue()], dtype=np.float32) / 255.0
+            lab = skcolor.rgb2lab(rgb01.reshape(1, 1, 3)).reshape(3)
+            a_val = float(lab[1])
+            b_val = float(lab[2])
 
         x1, y1 = tl
         x2, y2 = br
@@ -216,10 +227,10 @@ class UIControl:
             self.userEdits.append(self.userEdit)
             print('add user edit %d\n' % len(self.userEdits))
             self.userEdit.add(pnt, color, userColor, width, self.ui_count)
-            return userColor, width, isNew
+            return userColor, width, self.userEdit.exact_ab, isNew
         else:
-            userColor, width = self.userEdit.select_old(pnt, self.ui_count)
-            return userColor, width, isNew
+            userColor, width, exact_ab = self.userEdit.select_old(pnt, self.ui_count)
+            return userColor, width, exact_ab, isNew
 
     def movePoint(self, pnt, color, userColor, width):
         self.userEdit.add(pnt, color, userColor, width, self.ui_count)
@@ -237,6 +248,10 @@ class UIControl:
         # ---------------------------------------------------------------------------
         if self.userEdit is not None:
             self.userEdit.update_color(qcolor, userColor)
+
+    def update_exact_ab(self, ab):
+        if self.userEdit is not None:
+            self.userEdit.update_exact_ab(ab)
 
     def update_painter(self, painter):
         for ue in self.userEdits:
