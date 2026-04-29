@@ -27,7 +27,6 @@ from .gui_draw_gt import GUIDrawGTHints
 from .gui_gamut import GUIGamut
 from .gui_palette import GUIPalette
 from .gui_vis import GUI_VIS
-from .gui_main import MagnifierOverlay, HoverZoomFilter
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -200,6 +199,136 @@ def _np_to_qpix(arr: np.ndarray) -> QPixmap:
     h, w = arr.shape[:2]
     qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888)
     return QPixmap.fromImage(qimg)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Gamut magnifier (hover zoom on gamut widgets)
+# ──────────────────────────────────────────────────────────────────────────────
+class MagnifierOverlay(QWidget):
+    """Floating loupe that zooms into the gamut widget under the cursor."""
+    def __init__(self, parent=None, size=420, zoom=16.0):
+        super().__init__(parent)
+        self.size = int(size)
+        self.zoom = float(zoom)
+        self.min_zoom = 2.0
+        self.max_zoom = 200.0
+        self.pixel_zoom_threshold = 8.0
+        self.min_size = 160
+        self.max_size = 900
+        self.show_grid = True
+        self.cross_len = 14
+        self.cell_fill    = QColor(255, 255, 255, 40)
+        self.cell_border1 = QPen(QColor(255, 255, 255, 220), 2)
+        self.cell_border2 = QPen(QColor(0, 0, 0, 220), 1)
+        self.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.resize(self.size, self.size)
+        self._pm = None
+        self._piece_rect = QRect()
+        self._cell_rect  = QRect()
+        self._step_x = 1.0
+        self._step_y = 1.0
+
+    def set_zoom(self, z: float):
+        self.zoom = max(self.min_zoom, min(self.max_zoom, float(z)))
+
+    def set_size(self, s: int):
+        self.size = max(self.min_size, min(self.max_size, int(s)))
+        self.resize(self.size, self.size)
+        self.update()
+
+    def update_from_widget(self, src_widget: QWidget, local_pos: QPoint):
+        if not src_widget:
+            return
+        w = max(1, int(self.size / self.zoom))
+        h = max(1, int(self.size / self.zoom))
+        x = max(0, local_pos.x() - w // 2)
+        y = max(0, local_pos.y() - h // 2)
+        rect = QRect(x, y, w, h).intersected(src_widget.rect())
+        if rect.isEmpty():
+            return
+        piece = src_widget.grab(rect)
+        mode = Qt.FastTransformation if self.zoom >= self.pixel_zoom_threshold else Qt.SmoothTransformation
+        pm_scaled = piece.scaled(self.size, self.size, Qt.KeepAspectRatio, mode)
+        off_x = (self.width()  - pm_scaled.width())  // 2
+        off_y = (self.height() - pm_scaled.height()) // 2
+        self._pm = pm_scaled
+        self._piece_rect = QRect(off_x, off_y, pm_scaled.width(), pm_scaled.height())
+        self._step_x = pm_scaled.width()  / max(1, rect.width())
+        self._step_y = pm_scaled.height() / max(1, rect.height())
+        dx = float(local_pos.x() - rect.x())
+        dy = float(local_pos.y() - rect.y())
+        cell_x = int(np.floor(dx * self._step_x))
+        cell_y = int(np.floor(dy * self._step_y))
+        self._cell_rect = QRect(
+            self._piece_rect.left() + cell_x, self._piece_rect.top() + cell_y,
+            max(1, int(round(self._step_x))), max(1, int(round(self._step_y)))
+        )
+        self.move(src_widget.mapToGlobal(local_pos) + QPoint(16, 16))
+        self.show()
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
+        if self._pm is not None and not self._piece_rect.isEmpty():
+            p.drawPixmap(self._piece_rect, self._pm)
+            if self.show_grid and self.zoom >= self.pixel_zoom_threshold:
+                p.setPen(QPen(QColor(0, 0, 0, 40), 1))
+                x0, y0 = self._piece_rect.left(), self._piece_rect.top()
+                for i in range(int(round(self._pm.width() / self._step_x)) + 1):
+                    gx = int(round(x0 + i * self._step_x))
+                    p.drawLine(gx, y0, gx, y0 + self._piece_rect.height())
+                for j in range(int(round(self._pm.height() / self._step_y)) + 1):
+                    gy = int(round(y0 + j * self._step_y))
+                    p.drawLine(x0, gy, x0 + self._piece_rect.width(), gy)
+            if not self._cell_rect.isEmpty():
+                p.fillRect(self._cell_rect, self.cell_fill)
+                p.setPen(self.cell_border1)
+                p.drawRect(self._cell_rect.adjusted(0, 0, -1, -1))
+                p.setPen(self.cell_border2)
+                p.drawRect(self._cell_rect.adjusted(1, 1, -2, -2))
+        cx, cy = self.width() // 2, self.height() // 2
+        L = max(self.cross_len, int(self.size * 0.035))
+        p.setPen(QPen(QColor(255, 255, 255, 230), 3))
+        p.drawLine(cx - L, cy, cx + L, cy)
+        p.drawLine(cx, cy - L, cx, cy + L)
+        p.setPen(QPen(QColor(0, 0, 0, 220), 1))
+        p.drawLine(cx - L, cy, cx + L, cy)
+        p.drawLine(cx, cy - L, cx, cy + L)
+        p.end()
+
+
+class HoverZoomFilter(QObject):
+    """Event filter that shows MagnifierOverlay when hovering over a widget."""
+    def __init__(self, owner_widget: QWidget, overlay: MagnifierOverlay):
+        super().__init__(owner_widget)
+        self.owner = owner_widget
+        self.overlay = overlay
+        self.owner.setMouseTracking(True)
+
+    def eventFilter(self, obj, ev):
+        t = ev.type()
+        if t == QEvent.Leave:
+            self.overlay.hide()
+            return False
+        if t == QEvent.MouseMove:
+            self.overlay.update_from_widget(self.owner, ev.pos())
+            return False
+        if t == QEvent.Wheel:
+            dy = ev.angleDelta().y() if hasattr(ev, "angleDelta") else 0
+            if dy == 0 and hasattr(ev, "pixelDelta"):
+                dy = ev.pixelDelta().y()
+            if dy == 0:
+                return False
+            if ev.modifiers() & Qt.ShiftModifier:
+                self.overlay.set_size(self.overlay.size + (40 if dy > 0 else -40))
+            else:
+                step = 1.45 if (ev.modifiers() & Qt.ControlModifier) else 1.20
+                self.overlay.set_zoom(self.overlay.zoom * (step if dy > 0 else 1 / step))
+            self.overlay.update_from_widget(self.owner, ev.pos() if hasattr(ev, "pos") else QPoint(0, 0))
+            return True
+        return False
 
 
 class ColorSwatch(QWidget):
@@ -1060,21 +1189,31 @@ class IColoriTUIv2(QMainWindow):
         if not path.endswith(".iclr"):
             path += ".iclr"
 
-        # ── Save target PNG at original resolution with adjustments ──────────
+        # ── Save target PNG at original resolution with ALL adjustments baked in ─
+        # (covers BC sliders + L calibration in any combination/order)
         png_path = path.replace(".iclr", "_target.png")
         from skimage import color as ski_c
-        # Start from the full-resolution original (BGR → RGB)
+
+        # Derive the combined L mapping by comparing original 224×224 L
+        # (recomputed from im_full) with the current adjusted 224×224 L.
+        orig_bgr_224 = _cv2.resize(
+            dw.im_full, (dw.load_size, dw.load_size), interpolation=_cv2.INTER_CUBIC
+        )
+        orig_lab_224 = ski_c.rgb2lab(orig_bgr_224[:, :, ::-1].astype(np.float32) / 255.0)
+        orig_L_flat  = orig_lab_224[:, :, 0].ravel()
+        curr_L_flat  = dw.im_lab[:, :, 0].ravel()
+
+        # Sort by source L so np.interp gets a monotone lookup table
+        idx = np.argsort(orig_L_flat)
+        src_sorted = orig_L_flat[idx]
+        dst_sorted = curr_L_flat[idx]
+
+        # Apply the derived mapping to the full-resolution image
         im_rgb_full = dw.im_full[:, :, ::-1].astype(np.float32) / 255.0
         lab_full = ski_c.rgb2lab(im_rgb_full)
-        # Apply current brightness/contrast to the full-res L channel
-        b = self._brightnessSlider.value()
-        c = self._contrastSlider.value() / 100.0
-        if b != 0 or c != 1.0:
-            lab_full[:, :, 0] = np.clip(
-                (lab_full[:, :, 0] - 50.0) * c + 50.0 + b, 0.0, 100.0
-            )
+        lab_full[:, :, 0] = np.interp(lab_full[:, :, 0], src_sorted, dst_sorted).astype(np.float32)
         rgb_full = (np.clip(ski_c.lab2rgb(lab_full), 0, 1) * 255).astype(np.uint8)
-        _cv2.imwrite(png_path, rgb_full[:, :, ::-1])  # RGB → BGR for cv2
+        _cv2.imwrite(png_path, rgb_full[:, :, ::-1])
 
         # ── Build JSON payload ────────────────────────────────────────────────
         hints = []
@@ -1098,11 +1237,11 @@ class IColoriTUIv2(QMainWindow):
                 palette_colors.append(list(h["user_rgb"]))
 
         session = {
-            "version":          "1.0",
+            "version":          "1.1",
             "original_path":    getattr(dw, 'image_file', ''),
             "target_png":       os.path.basename(png_path),
-            "brightness":       self._brightnessSlider.value(),
-            "contrast":         self._contrastSlider.value(),
+            "brightness":       0,    # adjustments are baked into target_png
+            "contrast":         100,
             "palette_colors":   palette_colors,
             "hints":            hints,
         }
@@ -1155,19 +1294,22 @@ class IColoriTUIv2(QMainWindow):
         self.drawWidget.pos  = None
         self.drawWidget.init_result(img_to_load)
 
-        # ── Re-apply brightness/contrast if loading from original ─────────────
-        b = session.get("brightness", 0)
-        c = session.get("contrast", 100)
-        self._brightnessSlider.blockSignals(True)
-        self._contrastSlider.blockSignals(True)
-        self._brightnessSlider.setValue(b)
-        self._contrastSlider.setValue(c)
-        self._brightnessSlider.blockSignals(False)
-        self._contrastSlider.blockSignals(False)
-        self._brightnessVal.setText(f"{b:+d}")
-        self._contrastVal.setText(f"{c/100:.2f}×")
-        if apply_adj and (b != 0 or c != 100):
-            self._apply_bc_adjustment(b, c / 100.0, run_model=False)
+        # ── Re-apply BC if loading from original path (bundled PNG has it baked in)
+        if apply_adj:
+            b = session.get("brightness", 0)
+            c = session.get("contrast", 100)
+            if b != 0 or c != 100:
+                self._brightnessSlider.blockSignals(True)
+                self._contrastSlider.blockSignals(True)
+                self._brightnessSlider.setValue(b)
+                self._contrastSlider.setValue(c)
+                self._brightnessSlider.blockSignals(False)
+                self._contrastSlider.blockSignals(False)
+                self._brightnessVal.setText(f"{b:+d}")
+                self._contrastVal.setText(f"{c/100:.2f}×")
+                self._apply_bc_adjustment(b, c / 100.0, run_model=False)
+        # else: bundled PNG already has all adjustments baked in;
+        #       sliders were reset to neutral by _clear_L_cal_originals() above.
 
         # ── Restore hints ─────────────────────────────────────────────────────
         from PyQt5.QtCore import QPoint
