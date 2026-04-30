@@ -99,6 +99,21 @@ El runner de GitHub Actions tiene el VC++ Runtime instalado, pero la máquina de
 1. Agregar paso `Bundle VC++ Runtime DLLs into _internal` en el workflow: copia `MSVCP140.dll`, `VCRUNTIME140.dll` y `VCRUNTIME140_1.dll` desde `%SystemRoot%\System32\` del runner directamente a `dist\iColoriT_LoRA\_internal\` después del build. El exe queda autónomo — no requiere instalación previa en la máquina del usuario.
 2. Fix del regex en `Patch spec to use icon.ico`: cambiado de comillas simples a dobles para que matchee exactamente el spec (`# icon="gui/icon.ico",`).
 
+**Estado**: fix incompleto — los DLLs ya estaban presentes en `_internal/` pero el error persistió.
+
+---
+
+## Error 5: `[WinError 1114] c10.dll` — causa real #3 (PyTorch demasiado nuevo para el hardware)
+
+**Síntoma**  
+Exactamente el mismo `WinError 1114` en `c10.dll`. Los VC++ DLLs (`msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`) están en `_internal/`. `torch_cpu.dll` pesa **265MB**, lo que indica PyTorch 2.5+ instalado.
+
+**Causa real**  
+El workflow instalaba la versión más reciente de torch (sin pinear). PyTorch 2.3+ cambió la estructura interna de `c10.dll` en Windows e introdujo nuevas dependencias de inicialización que fallan en CPUs AMD antiguos (AMD A10-9620P — arquitectura Excavator 2016). La inicialización de `c10.dll` llama código que requiere features de CPU no disponibles en esa microarquitectura.
+
+**Fix aplicado**  
+Pinear torch a `torch==2.1.2 torchvision==0.16.2` en el workflow. Es la última versión estable anterior a los cambios de 2.3+, tiene soporte confirmado en Windows CPU + AMD, y es compatible con el modelo iColoriT + LoRA.
+
 **Estado**: pendiente de confirmar con el próximo build.
 
 ---

@@ -20,7 +20,7 @@ jobs:
       - name: Install CPU-only torch
         timeout-minutes: 20
         run: |
-          pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu
 
       - name: Install dependencies
         timeout-minutes: 15
