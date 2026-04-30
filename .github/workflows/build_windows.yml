@@ -26,7 +26,7 @@ jobs:
         timeout-minutes: 15
         run: |
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller pyinstaller-hooks-contrib
 
       - name: Convert icon
         run: |
@@ -68,6 +68,18 @@ jobs:
             echo     pause
             echo ^)
           ) > dist\iColoriT_LoRA\run_icolorit.bat
+
+      - name: Bundle VC++ Redistributable
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "dist\iColoriT_LoRA\vc_redist.x64.exe"
+          Set-Content "dist\iColoriT_LoRA\INSTALL_FIRST.txt" @"
+Si iColoriT_LoRA.exe no abre, instala primero el Visual C++ Redistributable:
+  -> Doble click en vc_redist.x64.exe y sigue los pasos
+  -> Reinicia y vuelve a intentar
+"@
+        continue-on-error: true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
