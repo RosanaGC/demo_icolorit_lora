@@ -77,13 +77,8 @@ jobs:
       - name: Bundle VC++ Redistributable
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
-            -OutFile "dist\iColoriT_LoRA\vc_redist.x64.exe"
-          Set-Content "dist\iColoriT_LoRA\INSTALL_FIRST.txt" @"
-Si iColoriT_LoRA.exe no abre, instala primero el Visual C++ Redistributable:
-  -> Doble click en vc_redist.x64.exe y sigue los pasos
-  -> Reinicia y vuelve a intentar
-"@
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "dist\iColoriT_LoRA\vc_redist.x64.exe"
+          'Si iColoriT_LoRA.exe no abre, corre vc_redist.x64.exe primero y reinicia.' | Set-Content "dist\iColoriT_LoRA\INSTALL_FIRST.txt"
         continue-on-error: true
 
       - name: Upload artifact
