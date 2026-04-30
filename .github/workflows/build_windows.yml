@@ -37,7 +37,7 @@ jobs:
         shell: pwsh
         run: |
           (Get-Content icolorit_v2.spec) `
-            -replace "# icon='gui/icon.ico'", "icon='gui/icon.ico'" |
+            -replace '# icon="gui/icon.ico",', 'icon="gui/icon.ico",' |
           Set-Content icolorit_v2.spec
         continue-on-error: true
 
@@ -45,6 +45,13 @@ jobs:
         timeout-minutes: 30
         run: |
           pyinstaller icolorit_v2.spec --noconfirm --clean
+
+      - name: Bundle VC++ Runtime DLLs into _internal
+        shell: cmd
+        run: |
+          copy "%SystemRoot%\System32\MSVCP140.dll"      "dist\iColoriT_LoRA\_internal\"
+          copy "%SystemRoot%\System32\VCRUNTIME140.dll"  "dist\iColoriT_LoRA\_internal\"
+          copy "%SystemRoot%\System32\VCRUNTIME140_1.dll" "dist\iColoriT_LoRA\_internal\"
 
       - name: Create checks placeholder
         run: |

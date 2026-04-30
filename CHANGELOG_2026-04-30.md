@@ -87,6 +87,22 @@ Deshabilitar UPX en el spec: `upx=False` en ambos `EXE(...)` y `COLLECT(...)`.
 
 ---
 
+## Error 4: `[WinError 1114] c10.dll` — causa real #2 (VC++ Runtime faltante)
+
+**Síntoma**  
+Idéntico al Error 3 (`WinError 1114` en `c10.dll`), persiste incluso con `upx=False`.
+
+**Causa real**  
+El runner de GitHub Actions tiene el VC++ Runtime instalado, pero la máquina del usuario no necesariamente. Si el usuario ejecuta `iColoriT_LoRA.exe` directamente (sin pasar por `run_icolorit.bat`), `vc_redist.x64.exe` nunca se instala. `c10.dll` depende de `MSVCP140.dll`, `VCRUNTIME140.dll` y `VCRUNTIME140_1.dll`; si alguna falta, su `DllMain` falla con error 1114.
+
+**Fixes aplicados**
+1. Agregar paso `Bundle VC++ Runtime DLLs into _internal` en el workflow: copia `MSVCP140.dll`, `VCRUNTIME140.dll` y `VCRUNTIME140_1.dll` desde `%SystemRoot%\System32\` del runner directamente a `dist\iColoriT_LoRA\_internal\` después del build. El exe queda autónomo — no requiere instalación previa en la máquina del usuario.
+2. Fix del regex en `Patch spec to use icon.ico`: cambiado de comillas simples a dobles para que matchee exactamente el spec (`# icon="gui/icon.ico",`).
+
+**Estado**: pendiente de confirmar con el próximo build.
+
+---
+
 ## Estado final del spec (cambios acumulados)
 
 ```python
