@@ -1,18 +1,16 @@
 # Runtime hook: fix numpy DLL loading on Windows with Python 3.8+
 #
-# Python 3.8+ changed DLL search semantics on Windows — directories in PATH
-# are no longer trusted for DLL resolution. PyInstaller bundles the files but
-# they sit inside sys._MEIPASS subdirectories that Windows won't find
-# automatically. os.add_dll_directory() registers them as trusted.
+# Python 3.8+ requires explicit os.add_dll_directory() calls — PATH is not
+# searched for DLLs anymore. We scan the entire bundle and register every
+# subdirectory that contains .dll or .pyd files.
 import os
 import sys
 
 if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
-    _base = sys._MEIPASS
-    # Always trust the bundle root
-    os.add_dll_directory(_base)
-    # numpy stores OpenBLAS and other C-library DLLs in .libs and core
-    for _sub in ("numpy/.libs", "numpy\\libs", "numpy/core", "numpy\\core"):
-        _p = os.path.join(_base, _sub)
-        if os.path.isdir(_p):
-            os.add_dll_directory(_p)
+    os.add_dll_directory(sys._MEIPASS)
+    for _root, _dirs, _files in os.walk(sys._MEIPASS):
+        if any(f.lower().endswith((".dll", ".pyd")) for f in _files):
+            try:
+                os.add_dll_directory(_root)
+            except OSError:
+                pass
