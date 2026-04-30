@@ -229,7 +229,12 @@ def _make_switch_fn(args):
 
 def _resolve_path(p: str) -> str:
     if not os.path.isabs(p):
-        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+        # In a PyInstaller bundle use the exe's folder (parent of _internal/),
+        # so checks/ and other user-facing dirs sit next to the exe.
+        if hasattr(sys, "_MEIPASS"):
+            base = os.path.dirname(sys.executable)
+        else:
+            base = os.path.dirname(os.path.abspath(__file__))
         p = os.path.join(base, p)
     return p
 
