@@ -56,8 +56,13 @@ jobs:
         run: |
           (
             echo @echo off
-            echo REM  iColoriT LoRA — Debug Launcher
-            echo echo Starting iColoriT LoRA...
+            echo REM  iColoriT LoRA — Launcher
+            echo cd /d "%%~dp0"
+            echo if exist vc_redist.x64.exe (
+            echo     echo Instalando Visual C++ Redistributable...
+            echo     vc_redist.x64.exe /install /quiet /norestart
+            echo ^)
+            echo echo Iniciando iColoriT LoRA...
             echo iColoriT_LoRA.exe ^> icolorit_log.txt 2^>^&1
             echo set EXIT_CODE=%%errorlevel%%
             echo if %%EXIT_CODE%% neq 0 (
