@@ -8,12 +8,15 @@
 
 import sys
 import os
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all
 
 block_cipher = None
 
 # ── Source root ───────────────────────────────────────────────────────────────
 SRC = os.path.abspath(".")
+
+# ── Collect numpy binaries + data + hidden imports (fixes DLL load error) ────
+numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all("numpy")
 
 # ── Data files to bundle ──────────────────────────────────────────────────────
 # Format: (src_glob_or_dir, dest_dir_inside_bundle)
@@ -30,8 +33,8 @@ added_datas = [
     *collect_data_files("cv2"),
     # einops
     *collect_data_files("einops"),
-    # numpy data files (fixes "C extensions failed" on Windows)
-    *collect_data_files("numpy"),
+    # numpy: datos (los binarios van aparte en Analysis)
+    *numpy_datas,
 ]
 
 # ── Hidden imports ────────────────────────────────────────────────────────────
@@ -101,9 +104,9 @@ hidden = [
 a = Analysis(
     [os.path.join(SRC, "icolorit_ui_v2.py")],
     pathex=[SRC],
-    binaries=[],
+    binaries=numpy_binaries,          # DLLs de numpy (_multiarray_umath, libopenblas, etc.)
     datas=added_datas,
-    hiddenimports=hidden,
+    hiddenimports=hidden + numpy_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
