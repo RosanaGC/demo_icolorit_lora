@@ -109,7 +109,7 @@ a = Analysis(
     hiddenimports=hidden + numpy_hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=["runtime_hook_numpy.py"],
     excludes=[
         # Exclude heavy/unused packages to reduce bundle size
         "matplotlib",
