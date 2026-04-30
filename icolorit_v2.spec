@@ -15,8 +15,9 @@ block_cipher = None
 # ── Source root ───────────────────────────────────────────────────────────────
 SRC = os.path.abspath(".")
 
-# ── Collect numpy binaries + data + hidden imports (fixes DLL load error) ────
+# ── Collect numpy + torch binaries (fixes DLL load errors on Windows) ────────
 numpy_datas, numpy_binaries, numpy_hiddenimports = collect_all("numpy")
+torch_datas,  torch_binaries,  torch_hiddenimports  = collect_all("torch")
 
 # ── Data files to bundle ──────────────────────────────────────────────────────
 # Format: (src_glob_or_dir, dest_dir_inside_bundle)
@@ -33,8 +34,9 @@ added_datas = [
     *collect_data_files("cv2"),
     # einops
     *collect_data_files("einops"),
-    # numpy: datos (los binarios van aparte en Analysis)
+    # numpy/torch: datos (los binarios van aparte en Analysis)
     *numpy_datas,
+    *torch_datas,
 ]
 
 # ── Hidden imports ────────────────────────────────────────────────────────────
@@ -104,9 +106,9 @@ hidden = [
 a = Analysis(
     [os.path.join(SRC, "icolorit_ui_v2.py")],
     pathex=[SRC],
-    binaries=numpy_binaries,          # DLLs de numpy (_multiarray_umath, libopenblas, etc.)
+    binaries=numpy_binaries + torch_binaries,
     datas=added_datas,
-    hiddenimports=hidden + numpy_hiddenimports,
+    hiddenimports=hidden + numpy_hiddenimports + torch_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=["runtime_hook_numpy.py"],
