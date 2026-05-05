@@ -1376,7 +1376,7 @@ class IColoriTUIv2(QMainWindow):
         canvas_png = session.get("canvas_png", "")
         canvas_path = os.path.join(session_dir, canvas_png)
         if canvas_png and os.path.exists(canvas_path):
-            canvas_bgr = _cv2.imread(canvas_path)
+            canvas_bgr = _cv2.imdecode(np.fromfile(canvas_path, dtype=np.uint8), _cv2.IMREAD_COLOR)
             if canvas_bgr is not None:
                 canvas_rgb = _cv2.cvtColor(canvas_bgr, _cv2.COLOR_BGR2RGB)
                 if canvas_rgb.shape[:2] != (dw.win_h, dw.win_w):
@@ -1389,7 +1389,7 @@ class IColoriTUIv2(QMainWindow):
         mask_png = session.get("region_mask_png", "")
         mask_path = os.path.join(session_dir, mask_png)
         if mask_png and os.path.exists(mask_path):
-            mask_gray = _cv2.imread(mask_path, _cv2.IMREAD_GRAYSCALE)
+            mask_gray = _cv2.imdecode(np.fromfile(mask_path, dtype=np.uint8), _cv2.IMREAD_GRAYSCALE)
             if mask_gray is not None:
                 if mask_gray.shape != (dw.win_h, dw.win_w):
                     mask_gray = _cv2.resize(mask_gray, (dw.win_w, dw.win_h),

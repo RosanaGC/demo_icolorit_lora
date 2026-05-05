@@ -143,7 +143,11 @@ class GUIDraw(QWidget):
     def read_image(self, image_file):
         self.image_loaded = True
         self.image_file = image_file
-        im_bgr = cv2.imread(image_file)
+        # cv2.imread fails on Windows paths with non-ASCII characters; use imdecode instead
+        raw = np.fromfile(image_file, dtype=np.uint8)
+        im_bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        if im_bgr is None:
+            raise FileNotFoundError(f"Could not read image: {image_file}")
         self.im_full = im_bgr.copy()
 
         # preparar imagen ajustada al lienzo
