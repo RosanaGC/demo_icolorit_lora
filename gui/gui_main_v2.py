@@ -36,7 +36,7 @@ DARK_QSS = """
 QMainWindow, QWidget {
     background-color: #1e1e2e;
     color: #cdd6f4;
-    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-family: "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
 }
 QMainWindow::separator { background: #313244; width: 1px; height: 1px; }
@@ -807,6 +807,7 @@ class IColoriTUIv2(QMainWindow):
 
     # ── Mask toolbar (second row, always visible) ─────────────────────────────
     def _build_mask_toolbar(self):
+        self.addToolBarBreak()
         tb = QToolBar("Mask", self)
         tb.setMovable(False)
         tb.setObjectName("maskToolbar")

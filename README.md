@@ -37,22 +37,7 @@ Interfaz interactiva para colorizar imágenes en blanco y negro usando un modelo
 - conda activate icolorit_demo
 
 ### Paso 4: ejecutar
-- python3 icolorit_ui_2.py --model_path <path/to/checkpoint.pth> --target_image <path/to/image>
-
-Demo alternativa GT hints:
-- python3 icolorit_ui_gt.py --model_path <path/to/checkpoint.pth> --target_image <path/to/image>
-- Opcional: `--hints_file <path/to/hints.json|txt|csv>`
-
-Ejemplo real:
-python3 icolorit_ui_2.py --model_path /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/checks/Lora_r32_Dataset_4_epochs_1000_wES_lrf_1e-3.pth --target_image /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/samples/11.jpeg
-
-Ejemplo GT hints:
-python3 icolorit_ui_gt.py --model_path /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/checks/checkpoint-119 --target_image /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/samples/11.jpeg
-
-Ejemplo GT hints con archivo:
-python3 icolorit_ui_gt.py --model_path /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/checks/checkpoint-119 --target_image /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/samples/11.jpeg --hints_file /ruta/a/hints.txt
-
-python3 icolorit_ui_gt.py --model_path /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/checks/icolorit_base_4ch_patch16_224_original --target_image /Users/430267/Library/CloudStorage/OneDrive-Ulta/Documents/demo_icolorit_lora/samples/11.jpeg
+- python3 icolorit_ui_v2.py --model_path <path/to/checkpoint.pth> --target_image <path/to/image>
 
 ### Quick Start (visual)
 1. Abrí la app con un target (imagen a colorizar).
@@ -70,21 +55,12 @@ Atajos útiles:
 - `L`: load nueva imagen
 - `H`: load hints desde archivo
 
-### Screenshots
-Para agregar screenshots:
-1. Guardalos en una carpeta `docs/` (ej: `docs/ui_main.png`, `docs/ui_gamut.png`).
-2. Actualizá esta sección con los paths reales.
-
-Ejemplo:
-- `docs/ui_main.png`
-- `docs/ui_gamut.png`
-
 ### Formatos soportados
 - Target: `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`
 - Reference: `png`, `jpg`, `jpeg`, `bmp`, `tif`, `tiff`
 
 ### Notas importantes
-- `--model_path` debe apuntar a un archivo `.pth`, no a un directorio.
+- `--model_path`: ruta al modelo.
 - Si el modelo y el checkpoint no coinciden, la carga puede ser parcial (se usa `strict=False`).
 - Formatos de hints soportados:
   - `.txt` / `.csv` / `.tsv`: una coordenada `x,y` o `x y` por línea, en espacio `224x224`.
@@ -93,7 +69,6 @@ Ejemplo:
 ### Problemas comunes
 - Si la app crashea al cargar la imagen, revisá que el archivo exista y sea legible por OpenCV.
 - Si no ves cambios, probá con otra imagen de entrada y asegúrate de estar usando el `.pth` correcto.
-
 
 
 
