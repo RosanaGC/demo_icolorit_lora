@@ -633,6 +633,7 @@ class IColoriTUIv2(QMainWindow):
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_menu_bar()
         self._build_toolbar()
+        self._build_mask_toolbar()
         self._build_status_bar()
         self._build_central()
         self._build_left_dock()
@@ -803,31 +804,63 @@ class IColoriTUIv2(QMainWindow):
         self._brushLabel = QLabel("8")
         self._brushLabel.setFixedWidth(24)
         tb.addWidget(self._brushLabel)
+
+    # ── Mask toolbar (second row, always visible) ─────────────────────────────
+    def _build_mask_toolbar(self):
+        tb = QToolBar("Mask", self)
+        tb.setMovable(False)
+        tb.setObjectName("maskToolbar")
+        self.addToolBar(tb)
+
+        tb.addWidget(QLabel("  Mask: "))
+
+        self._actMaskBrush = QAction("✏  Brush", self)
+        self._actMaskBrush.setToolTip("Pintar máscara  ·  Izq=pintar  Der=borrar")
+        self._actMaskBrush.setCheckable(True)
+        self._actMaskBrush.triggered.connect(
+            lambda checked: self._set_mask_tool('brush' if checked else None))
+        tb.addAction(self._actMaskBrush)
+
+        self._actMaskRect = QAction("⬜  Rect", self)
+        self._actMaskRect.setToolTip("Máscara rectangular  ·  arrastrar")
+        self._actMaskRect.setCheckable(True)
+        self._actMaskRect.triggered.connect(
+            lambda checked: self._set_mask_tool('rect' if checked else None))
+        tb.addAction(self._actMaskRect)
+
+        self._actMaskLasso = QAction("🔷  Lasso", self)
+        self._actMaskLasso.setToolTip("Lasso geométrico  ·  Izq=punto  Der=cerrar y rellenar")
+        self._actMaskLasso.setCheckable(True)
+        self._actMaskLasso.triggered.connect(
+            lambda checked: self._set_mask_tool('lasso' if checked else None))
+        tb.addAction(self._actMaskLasso)
+
         tb.addSeparator()
 
-        # Mask tools
-        tb.addWidget(QLabel("Mask:"))
-        self._actMaskBrush = _act("✏ Brush", "Pintar máscara  ·  Izq=pintar  Der=borrar",
-                                  lambda checked: self._set_mask_tool('brush' if checked else None),
-                                  checkable=True)
-        self._actMaskRect  = _act("⬜ Rect",  "Máscara rectangular  ·  arrastrar",
-                                  lambda checked: self._set_mask_tool('rect' if checked else None),
-                                  checkable=True)
-        self._actMaskLasso = _act("🔷 Lasso", "Máscara libre  ·  Izq=punto  Der=cerrar y rellenar",
-                                  lambda checked: self._set_mask_tool('lasso' if checked else None),
-                                  checkable=True)
-        _act("✕ Mask", "Borrar máscara activa (canvas e hints se conservan)",
-             self._clear_mask_action)
+        act_cancel = QAction("⟳  Cancel", self)
+        act_cancel.setToolTip("Cancelar lasso en curso")
+        act_cancel.triggered.connect(self.drawWidget.cancel_lasso)
+        tb.addAction(act_cancel)
+
+        act_undo = QAction("↩  Undo shape", self)
+        act_undo.setToolTip("Deshacer último shape de máscara")
+        act_undo.triggered.connect(self.drawWidget.undo_mask_shape)
+        tb.addAction(act_undo)
+
+        act_clear = QAction("✕  Clear mask", self)
+        act_clear.setToolTip("Borrar máscara completa (canvas e hints se conservan)")
+        act_clear.triggered.connect(self._clear_mask_action)
+        tb.addAction(act_clear)
+
         tb.addSeparator()
-        tb.addWidget(QLabel("Mask sz:"))
+        tb.addWidget(QLabel("Brush sz: "))
         self._maskSzSlider = QSlider(Qt.Horizontal)
         self._maskSzSlider.setRange(3, 120)
         self._maskSzSlider.setValue(20)
-        self._maskSzSlider.setFixedWidth(80)
+        self._maskSzSlider.setFixedWidth(90)
         self._maskSzSlider.setToolTip("Tamaño del brush de máscara")
         self._maskSzSlider.valueChanged.connect(
-            lambda v: setattr(self.drawWidget, 'mask_brush_size', v)
-        )
+            lambda v: setattr(self.drawWidget, 'mask_brush_size', v))
         tb.addWidget(self._maskSzSlider)
 
     # ── Status bar ────────────────────────────────────────────────────────────
