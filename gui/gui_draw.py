@@ -88,6 +88,7 @@ class GUIDraw(QWidget):
         self.region_mask      = None   # uint8 ndarray (win_h, win_w) o None
         self.committed_canvas = None   # uint8 ndarray (win_h, win_w, 3) o None
         self.mask_brush_size  = 20     # px en espacio de imagen (win_w × win_h)
+        self._mask_shapes     = []     # list[np.ndarray] — una por lasso/rect, para undo
         self._mask_rect_start = None   # QPoint
         self._mask_lasso_pts  = []     # list[QPoint]
         self._mask_is_drawing = False
@@ -191,6 +192,7 @@ class GUIDraw(QWidget):
         # Resetear máscara al cargar nueva imagen
         self.region_mask      = None
         self.committed_canvas = None
+        self._mask_shapes     = []
         self._mask_rect_start = None
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
@@ -298,6 +300,7 @@ class GUIDraw(QWidget):
         self._redo.clear()
         self.region_mask      = None
         self.committed_canvas = None
+        self._mask_shapes     = []
         self._mask_rect_start = None
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
@@ -744,6 +747,9 @@ class GUIDraw(QWidget):
         self.update()
 
     def undo(self):
+        if self.mask_tool is not None and self._mask_shapes:
+            self.undo_mask_shape()
+            return
         if not self._history:
             return
         last = self._history.pop()
@@ -771,7 +777,29 @@ class GUIDraw(QWidget):
     def clear_mask(self):
         """Borra solo la máscara activa (canvas e hints se conservan)."""
         self.region_mask      = None
+        self._mask_shapes     = []
         self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
+        self.update()
+
+    def _rebuild_region_mask(self):
+        if not self._mask_shapes:
+            self.region_mask = None
+            return
+        result = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+        for shape in self._mask_shapes:
+            np.bitwise_or(result, shape, out=result)
+        self.region_mask = result
+
+    def undo_mask_shape(self):
+        if self._mask_shapes:
+            self._mask_shapes.pop()
+            self._rebuild_region_mask()
+            self.update()
+
+    def cancel_lasso(self):
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
         self._mask_cursor_pos = None
@@ -804,15 +832,21 @@ class GUIDraw(QWidget):
         x2, y2 = self._widget_to_img(p2)
         x1, x2 = min(x1, x2), max(x1, x2)
         y1, y2 = min(y1, y2), max(y1, y2)
-        self.region_mask[y1:y2 + 1, x1:x2 + 1] = 1
+        shape = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+        shape[y1:y2 + 1, x1:x2 + 1] = 1
+        self._mask_shapes.append(shape)
+        np.bitwise_or(self.region_mask, shape, out=self.region_mask)
         self.update()
 
     def _fill_lasso_mask(self, pts):
         if len(pts) < 3:
             return
         self._ensure_mask()
+        shape = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
         img_pts = np.array([self._widget_to_img(p) for p in pts], dtype=np.int32)
-        cv2.fillPoly(self.region_mask, [img_pts], 1)
+        cv2.fillPoly(shape, [img_pts], 1)
+        self._mask_shapes.append(shape)
+        np.bitwise_or(self.region_mask, shape, out=self.region_mask)
         self.update()
 
     def _draw_mask_overlay(self, painter):
@@ -849,6 +883,11 @@ class GUIDraw(QWidget):
                 painter.drawLine(pts[i], pts[i + 1])
             if self._mask_cursor_pos and self._mask_is_drawing:
                 painter.drawLine(pts[-1], self._mask_cursor_pos)
+                if len(pts) >= 2:
+                    # closing edge: cursor → first point
+                    close_pen = QPen(QColor(100, 149, 237, 110), 1, Qt.DashLine)
+                    painter.setPen(close_pen)
+                    painter.drawLine(self._mask_cursor_pos, pts[0])
 
     def handle_mask_press(self, event):
         """Devuelve True si el evento fue consumido por el tool de máscara."""

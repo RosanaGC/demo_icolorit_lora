@@ -1834,6 +1834,8 @@ class IColoriTUIv2(QMainWindow):
             self.drawWidget.zoom_out()
         elif key == Qt.Key_0:
             self.drawWidget.zoom_reset()
+        elif key == Qt.Key_Escape:
+            self.drawWidget.cancel_lasso()
         elif ctrl and key == Qt.Key_Z and not (mods & Qt.ShiftModifier):
             self.drawWidget.undo()
         elif ctrl and ((key == Qt.Key_Z and (mods & Qt.ShiftModifier)) or key == Qt.Key_Y):
