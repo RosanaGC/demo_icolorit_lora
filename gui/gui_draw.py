@@ -150,6 +150,9 @@ class GUIDraw(QWidget):
         if im_bgr is None:
             raise FileNotFoundError(f"Could not read image: {image_file}")
         self.im_full = im_bgr.copy()
+        lab_full = color.rgb2lab(im_bgr[:, :, ::-1])
+        self.l_full = lab_full[:, :, 0]
+        self.result_full = None
 
         # preparar imagen ajustada al lienzo
         h, w, _ = self.im_full.shape
@@ -292,6 +295,7 @@ class GUIDraw(QWidget):
         self.ui_mode = 'none'
         self.pos = None
         self.result = None
+        self.result_full = None
         self.user_color = None
         self.color = None
         self.uiControl.reset()
@@ -403,7 +407,8 @@ class GUIDraw(QWidget):
         dst_dir = os.path.join(dir_path, f"icolor_{ts}") if make_subdir else dir_path
         os.makedirs(dst_dir, exist_ok=True)
 
-        result_bgr = cv2.cvtColor(self.result, cv2.COLOR_RGB2BGR)
+        out = self.result_full if self.result_full is not None else self.result
+        result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         mask_bin = (self.im_mask0.transpose((1, 2, 0)).astype(np.uint8) * 255)  # (H,W,1)
         cv2.imwrite(os.path.join(dst_dir, "ours.png"), result_bgr)
         cv2.imwrite(os.path.join(dst_dir, "input_mask.png"), mask_bin)
@@ -495,7 +500,8 @@ class GUIDraw(QWidget):
         os.makedirs(out_dir, exist_ok=True)
 
         # reutilizamos save_result pero sin subcarpeta: escribimos variantes con sufijo
-        result_bgr = cv2.cvtColor(self.result, cv2.COLOR_RGB2BGR)
+        out = self.result_full if self.result_full is not None else self.result
+        result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         cv2.imwrite(f"{base_path}_ours.png", result_bgr)
 
         mask_bin = (self.im_mask0.transpose((1, 2, 0)).astype(np.uint8) * 255)
@@ -621,6 +627,11 @@ class GUIDraw(QWidget):
         pred_lab = np.concatenate((self.l_win[..., np.newaxis], ab_win), axis=2)
         pred_rgb = (np.clip(color.lab2rgb(pred_lab), 0, 1) * 255).astype('uint8')
         self.result = pred_rgb
+
+        h_full, w_full = self.im_full.shape[:2]
+        ab_full = cv2.resize(ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
+        pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
+        self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
         # Compositing: si hay máscara activa, solo escribimos esa región al canvas acumulado
         if self.region_mask is not None and np.any(self.region_mask):
