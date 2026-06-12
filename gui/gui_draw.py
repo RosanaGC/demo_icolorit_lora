@@ -153,6 +153,7 @@ class GUIDraw(QWidget):
         lab_full = color.rgb2lab(im_bgr[:, :, ::-1])
         self.l_full = lab_full[:, :, 0]
         self.result_full = None
+        self.committed_canvas_full = None
 
         # preparar imagen ajustada al lienzo
         h, w, _ = self.im_full.shape
@@ -296,6 +297,7 @@ class GUIDraw(QWidget):
         self.pos = None
         self.result = None
         self.result_full = None
+        self.committed_canvas_full = None
         self.user_color = None
         self.color = None
         self.uiControl.reset()
@@ -407,7 +409,12 @@ class GUIDraw(QWidget):
         dst_dir = os.path.join(dir_path, f"icolor_{ts}") if make_subdir else dir_path
         os.makedirs(dst_dir, exist_ok=True)
 
-        out = self.result_full if self.result_full is not None else self.result
+        if self.committed_canvas_full is not None:
+            out = self.committed_canvas_full
+        elif self.result_full is not None:
+            out = self.result_full
+        else:
+            out = self.result
         result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         mask_bin = (self.im_mask0.transpose((1, 2, 0)).astype(np.uint8) * 255)  # (H,W,1)
         cv2.imwrite(os.path.join(dst_dir, "ours.png"), result_bgr)
@@ -500,7 +507,12 @@ class GUIDraw(QWidget):
         os.makedirs(out_dir, exist_ok=True)
 
         # reutilizamos save_result pero sin subcarpeta: escribimos variantes con sufijo
-        out = self.result_full if self.result_full is not None else self.result
+        if self.committed_canvas_full is not None:
+            out = self.committed_canvas_full
+        elif self.result_full is not None:
+            out = self.result_full
+        else:
+            out = self.result
         result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         cv2.imwrite(f"{base_path}_ours.png", result_bgr)
 
@@ -637,13 +649,21 @@ class GUIDraw(QWidget):
         if self.region_mask is not None and np.any(self.region_mask):
             if self.committed_canvas is None:
                 self.committed_canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
+            if self.committed_canvas_full is None:
+                self.committed_canvas_full = np.zeros((h_full, w_full, 3), dtype=np.uint8)
             canvas = self.committed_canvas.copy()
             m = self.region_mask.astype(bool)
             canvas[m] = pred_rgb[m]
             self.committed_canvas = canvas
+            m_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
+                                interpolation=cv2.INTER_NEAREST).astype(bool)
+            canvas_full = self.committed_canvas_full.copy()
+            canvas_full[m_full] = self.result_full[m_full]
+            self.committed_canvas_full = canvas_full
             self.update_result.emit(canvas)
         else:
             self.committed_canvas = pred_rgb.copy()
+            self.committed_canvas_full = self.result_full.copy()
             self.update_result.emit(pred_rgb)
         self.update()
 
