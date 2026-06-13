@@ -610,6 +610,24 @@ class GUIDraw(QWidget):
         self.init_result(path)  # -> read_image(...) -> compute_result() -> update()
 
     # -------------------- Modelo --------------------
+    def _poisson_blend(self, src, dst, mask_01):
+        """Poisson seamless clone de src en dst dentro de mask_01 (valores 0/1, uint8)."""
+        ys, xs = np.where(mask_01 > 0)
+        if len(xs) == 0:
+            return dst.copy()
+        center = (int(xs.mean()), int(ys.mean()))
+        mask_255 = (mask_01.astype(np.uint8) * 255)
+        try:
+            return cv2.seamlessClone(
+                np.ascontiguousarray(src, dtype=np.uint8),
+                np.ascontiguousarray(dst, dtype=np.uint8),
+                mask_255, center, cv2.NORMAL_CLONE,
+            )
+        except cv2.error:
+            result = dst.copy()
+            result[mask_01.astype(bool)] = src[mask_01.astype(bool)]
+            return result
+
     def compute_result(self):
         im, mask = self.uiControl.get_input()
         im_mask0 = mask > 0.0
@@ -645,22 +663,19 @@ class GUIDraw(QWidget):
         pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
         self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
-        # Compositing: si hay máscara activa, solo escribimos esa región al canvas acumulado
+        # Compositing: si hay máscara activa, Poisson seamless clone en la región
         if self.region_mask is not None and np.any(self.region_mask):
-            if self.committed_canvas is None:
-                self.committed_canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
-            if self.committed_canvas_full is None:
-                self.committed_canvas_full = np.zeros((h_full, w_full, 3), dtype=np.uint8)
-            canvas = self.committed_canvas.copy()
-            m = self.region_mask.astype(bool)
-            canvas[m] = pred_rgb[m]
-            self.committed_canvas = canvas
-            m_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
-                                interpolation=cv2.INTER_NEAREST).astype(bool)
-            canvas_full = self.committed_canvas_full.copy()
-            canvas_full[m_full] = self.result_full[m_full]
-            self.committed_canvas_full = canvas_full
-            self.update_result.emit(canvas)
+            gray_rgb = cv2.cvtColor(self.gray_win, cv2.COLOR_BGR2RGB)
+            bg = gray_rgb if self.committed_canvas is None else self.committed_canvas.copy()
+            self.committed_canvas = self._poisson_blend(pred_rgb, bg, self.region_mask)
+
+            gray_full_rgb = cv2.cvtColor(self.im_gray3, cv2.COLOR_BGR2RGB)
+            bg_full = gray_full_rgb if self.committed_canvas_full is None else self.committed_canvas_full.copy()
+            mask_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
+                                   interpolation=cv2.INTER_NEAREST)
+            self.committed_canvas_full = self._poisson_blend(self.result_full, bg_full, mask_full)
+
+            self.update_result.emit(self.committed_canvas)
         else:
             self.committed_canvas = pred_rgb.copy()
             self.committed_canvas_full = self.result_full.copy()
