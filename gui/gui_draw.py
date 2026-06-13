@@ -85,10 +85,15 @@ class GUIDraw(QWidget):
         self.save_dir = None
 
         # ---- Máscara / Region compositing ----
-        self.mask_tool        = None   # 'brush' | 'rect' | 'lasso' | None
-        self.region_mask      = None   # uint8 ndarray (win_h, win_w) o None
-        self.committed_canvas = None   # uint8 ndarray (win_h, win_w, 3) o None
-        self.mask_brush_size  = 20     # px en espacio de imagen (win_w × win_h)
+        self.mask_tool             = None   # 'brush' | 'rect' | 'lasso' | None
+        self.region_mask           = None   # uint8 ndarray (win_h, win_w) o None
+        self.committed_canvas      = None   # base + overlays a win_size
+        self.committed_canvas_full = None   # base + overlays a resolución original
+        self.base_win              = None   # colorización global (sin máscara) a win_size
+        self.base_full             = None   # colorización global a resolución original
+        self.accumulated_mask      = None   # bool (win_h, win_w) — unión de todas las máscaras
+        self.accumulated_mask_full = None   # bool (h_full, w_full)
+        self.mask_brush_size       = 20     # px en espacio de imagen (win_w × win_h)
         self._mask_shapes     = []     # list[np.ndarray] — una por lasso/rect, para undo
         self._mask_rect_start = None   # QPoint
         self._mask_lasso_pts  = []     # list[QPoint]
@@ -153,8 +158,13 @@ class GUIDraw(QWidget):
         self.im_full = im_bgr.copy()
         lab_full = color.rgb2lab(im_bgr[:, :, ::-1])
         self.l_full = lab_full[:, :, 0]
-        self.result_full = None
+        self.result_full          = None
+        self.committed_canvas     = None
         self.committed_canvas_full = None
+        self.base_win             = None
+        self.base_full            = None
+        self.accumulated_mask     = None
+        self.accumulated_mask_full = None
 
         # preparar imagen ajustada al lienzo
         h, w, _ = self.im_full.shape
@@ -195,9 +205,14 @@ class GUIDraw(QWidget):
         self.brushWidth = 1.0
 
         # Resetear máscara al cargar nueva imagen
-        self.region_mask      = None
-        self.committed_canvas = None
-        self._mask_shapes     = []
+        self.region_mask           = None
+        self.committed_canvas      = None
+        self.committed_canvas_full = None
+        self.base_win              = None
+        self.base_full             = None
+        self.accumulated_mask      = None
+        self.accumulated_mask_full = None
+        self._mask_shapes          = []
         self._mask_rect_start = None
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
@@ -297,8 +312,13 @@ class GUIDraw(QWidget):
         self.ui_mode = 'none'
         self.pos = None
         self.result = None
-        self.result_full = None
+        self.result_full           = None
+        self.committed_canvas      = None
         self.committed_canvas_full = None
+        self.base_win              = None
+        self.base_full             = None
+        self.accumulated_mask      = None
+        self.accumulated_mask_full = None
         self.user_color = None
         self.color = None
         self.uiControl.reset()
@@ -306,7 +326,6 @@ class GUIDraw(QWidget):
         self._history.clear()
         self._redo.clear()
         self.region_mask      = None
-        self.committed_canvas = None
         self._mask_shapes     = []
         self._mask_rect_start = None
         self._mask_lasso_pts  = []
@@ -623,7 +642,7 @@ class GUIDraw(QWidget):
         dst_f = dst.astype(np.float32)
         return np.clip(alpha * src_f + (1.0 - alpha) * dst_f, 0, 255).astype(np.uint8)
 
-    def compute_result(self):
+    def compute_result(self, _force_mask_composite=None):
         im, mask = self.uiControl.get_input()
         im_mask0 = mask > 0.0
         self.im_mask0 = im_mask0.transpose((2, 0, 1))  # (1,H,W)
@@ -658,24 +677,73 @@ class GUIDraw(QWidget):
         pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
         self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
-        # Compositing: si hay máscara activa, blend con feathering en los bordes
-        if self.region_mask is not None and np.any(self.region_mask):
-            gray_rgb = cv2.cvtColor(self.gray_win, cv2.COLOR_BGR2RGB)
-            bg = gray_rgb if self.committed_canvas is None else self.committed_canvas.copy()
-            self.committed_canvas = self._feather_blend(pred_rgb, bg, self.region_mask, radius=7)
+        # Determinar si usar el path de máscara
+        if _force_mask_composite is True:
+            # BC explícito con máscara → siempre mask path
+            _use_mask = (self.region_mask is not None and np.any(self.region_mask))
+        else:
+            # Auto-detect: mask path solo si el click fue DENTRO de la máscara
+            _use_mask = False
+            if self.region_mask is not None and np.any(self.region_mask) and self.pos is not None:
+                try:
+                    ix, iy = self._widget_to_img(self.pos)
+                    _use_mask = bool(self.region_mask[iy, ix])
+                except Exception:
+                    pass
 
-            gray_full_rgb = cv2.cvtColor(self.im_gray3, cv2.COLOR_BGR2RGB)
-            bg_full = gray_full_rgb if self.committed_canvas_full is None else self.committed_canvas_full.copy()
-            mask_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
-                                   interpolation=cv2.INTER_NEAREST)
+        # Compositing
+        if _use_mask:
+            # ── Con máscara: overlay con feathering sobre la base acumulada ──
+            if self.committed_canvas is None:
+                # Primera máscara y aún no hay canvas: inicializar con la base global (o gris)
+                base_bg = self.base_win if self.base_win is not None else cv2.cvtColor(self.gray_win, cv2.COLOR_BGR2RGB)
+                self.committed_canvas = base_bg.copy()
+                base_bg_f = self.base_full if self.base_full is not None else cv2.cvtColor(self.im_gray3, cv2.COLOR_BGR2RGB)
+                self.committed_canvas_full = base_bg_f.copy()
+            if self.accumulated_mask is None:
+                # Primera región de máscara: inicializar acumuladores
+                self.accumulated_mask      = np.zeros((self.win_h, self.win_w), dtype=bool)
+                self.accumulated_mask_full = np.zeros((h_full, w_full), dtype=bool)
+
+            # Calcular blend_mask: solo píxeles NUEVOS (no comprometidos aún).
+            # Si todos ya están en accumulated_mask, el usuario re-trabaja la misma
+            # región → blend completo (permite múltiples hints en la misma área).
+            if np.any(self.accumulated_mask):
+                new_px = self.region_mask.astype(bool) & ~self.accumulated_mask
+                blend_mask = new_px.astype(np.uint8) if np.any(new_px) else self.region_mask
+            else:
+                blend_mask = self.region_mask
+
+            self.committed_canvas = self._feather_blend(pred_rgb, self.committed_canvas, blend_mask, radius=7)
+            self.accumulated_mask |= self.region_mask.astype(bool)
+
+            blend_mask_full = cv2.resize(blend_mask, (w_full, h_full), interpolation=cv2.INTER_NEAREST)
             r_full = max(1, int(7 * h_full / self.win_h))
-            self.committed_canvas_full = self._feather_blend(self.result_full, bg_full, mask_full, radius=r_full)
+            self.committed_canvas_full = self._feather_blend(self.result_full, self.committed_canvas_full, blend_mask_full, radius=r_full)
+            self.accumulated_mask_full |= cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full), interpolation=cv2.INTER_NEAREST).astype(bool)
 
             self.update_result.emit(self.committed_canvas)
         else:
-            self.committed_canvas = pred_rgb.copy()
-            self.committed_canvas_full = self.result_full.copy()
-            self.update_result.emit(pred_rgb)
+            # ── Sin máscara: actualizar la base global ──
+            self.base_win  = pred_rgb.copy()
+            self.base_full = self.result_full.copy()
+
+            if self.accumulated_mask is not None:
+                # Hay overlays: actualizar solo las zonas NO enmascaradas con la nueva base
+                canvas = pred_rgb.copy()
+                canvas[self.accumulated_mask] = self.committed_canvas[self.accumulated_mask]
+                self.committed_canvas = canvas
+
+                canvas_f = self.result_full.copy()
+                canvas_f[self.accumulated_mask_full] = self.committed_canvas_full[self.accumulated_mask_full]
+                self.committed_canvas_full = canvas_f
+
+                self.update_result.emit(self.committed_canvas)
+            else:
+                # Sin overlays todavía: committed_canvas = base
+                self.committed_canvas      = pred_rgb.copy()
+                self.committed_canvas_full = self.result_full.copy()
+                self.update_result.emit(pred_rgb)
         self.update()
 
     # -------------------- Pintado --------------------
@@ -700,7 +768,9 @@ class GUIDraw(QWidget):
             dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
             p.drawImage(QRect(dw_z, dh_z, ww_z, wh_z), qImg, QRect(0, 0, w, h))
 
-        # Overlay semitransparente de la máscara activa
+        # Overlay verde: regiones ya comprometidas (accumulated_mask)
+        self._draw_accumulated_overlay(p)
+        # Overlay azul: máscara actualmente dibujada
         self._draw_mask_overlay(p)
 
         # Hints en coords base con la afín de zoom
@@ -891,6 +961,20 @@ class GUIDraw(QWidget):
         self._mask_shapes.append(shape)
         np.bitwise_or(self.region_mask, shape, out=self.region_mask)
         self.update()
+
+    def _draw_accumulated_overlay(self, painter):
+        """Overlay verde para regiones ya comprometidas (accumulated_mask)."""
+        if self.accumulated_mask is None or not np.any(self.accumulated_mask):
+            return
+        if not hasattr(self, 'win_h') or not hasattr(self, 'win_w'):
+            return
+        dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
+        H, W = self.accumulated_mask.shape
+        overlay = np.zeros((H, W, 4), dtype=np.uint8)
+        overlay[self.accumulated_mask] = [80, 200, 120, 60]   # verde semitransparente
+        overlay_c = np.ascontiguousarray(overlay)
+        qimg = QImage(overlay_c.data, W, H, 4 * W, QImage.Format_RGBA8888)
+        painter.drawImage(QRect(dw_z, dh_z, ww_z, wh_z), qimg, QRect(0, 0, W, H))
 
     def _draw_mask_overlay(self, painter):
         if self.region_mask is None or not np.any(self.region_mask):
