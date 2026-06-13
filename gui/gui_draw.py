@@ -678,6 +678,7 @@ class GUIDraw(QWidget):
             p.end()
             return
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
 
         im = getattr(self, 'gray_win', None) if (self.use_gray or self.result is None) else self.result
         if im is not None:
