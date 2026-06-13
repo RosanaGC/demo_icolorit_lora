@@ -610,6 +610,14 @@ class GUIDraw(QWidget):
         self.init_result(path)  # -> read_image(...) -> compute_result() -> update()
 
     # -------------------- Modelo --------------------
+    def _feather_blend(self, src, dst, mask_01, radius=15):
+        """Blend src sobre dst usando feathering gaussiano en los bordes de mask_01."""
+        k = radius * 2 + 1
+        alpha = cv2.GaussianBlur(mask_01.astype(np.float32), (k, k), 0)[..., np.newaxis]
+        src_f = src.astype(np.float32)
+        dst_f = dst.astype(np.float32)
+        return np.clip(alpha * src_f + (1.0 - alpha) * dst_f, 0, 255).astype(np.uint8)
+
     def compute_result(self):
         im, mask = self.uiControl.get_input()
         im_mask0 = mask > 0.0
@@ -645,22 +653,20 @@ class GUIDraw(QWidget):
         pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
         self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
-        # Compositing: si hay máscara activa, solo escribimos esa región al canvas acumulado
+        # Compositing: si hay máscara activa, blend con feathering en los bordes
         if self.region_mask is not None and np.any(self.region_mask):
-            if self.committed_canvas is None:
-                self.committed_canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
-            if self.committed_canvas_full is None:
-                self.committed_canvas_full = np.zeros((h_full, w_full, 3), dtype=np.uint8)
-            canvas = self.committed_canvas.copy()
-            m = self.region_mask.astype(bool)
-            canvas[m] = pred_rgb[m]
-            self.committed_canvas = canvas
-            m_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
-                                interpolation=cv2.INTER_NEAREST).astype(bool)
-            canvas_full = self.committed_canvas_full.copy()
-            canvas_full[m_full] = self.result_full[m_full]
-            self.committed_canvas_full = canvas_full
-            self.update_result.emit(canvas)
+            gray_rgb = cv2.cvtColor(self.gray_win, cv2.COLOR_BGR2RGB)
+            bg = gray_rgb if self.committed_canvas is None else self.committed_canvas.copy()
+            self.committed_canvas = self._feather_blend(pred_rgb, bg, self.region_mask, radius=7)
+
+            gray_full_rgb = cv2.cvtColor(self.im_gray3, cv2.COLOR_BGR2RGB)
+            bg_full = gray_full_rgb if self.committed_canvas_full is None else self.committed_canvas_full.copy()
+            mask_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
+                                   interpolation=cv2.INTER_NEAREST)
+            r_full = max(1, int(7 * h_full / self.win_h))
+            self.committed_canvas_full = self._feather_blend(self.result_full, bg_full, mask_full, radius=r_full)
+
+            self.update_result.emit(self.committed_canvas)
         else:
             self.committed_canvas = pred_rgb.copy()
             self.committed_canvas_full = self.result_full.copy()
