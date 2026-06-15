@@ -633,16 +633,22 @@ class GUIDraw(QWidget):
         pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
         self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
-        # Compositing: si hay máscara activa, solo escribimos esa región al canvas acumulado
+        # ── Compositing ───────────────────────────────────────────────────────
+        # NO CAMBIAR: lógica de referencia acordada en bug_fix branch (2026-06-15).
+        # Con máscara activa: copia hard-copy de pred_rgb solo en la región de la
+        # máscara sobre el canvas acumulado.  Sin máscara: reemplaza canvas completo.
+        # Este comportamiento es la base estable desde la cual se hacen mejoras.
         if self.region_mask is not None and np.any(self.region_mask):
             if self.committed_canvas is None:
+                # NO CAMBIAR: inicializar canvas en negro la primera vez
                 self.committed_canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
             canvas = self.committed_canvas.copy()
             m = self.region_mask.astype(bool)
-            canvas[m] = pred_rgb[m]
+            canvas[m] = pred_rgb[m]   # NO CAMBIAR: hard copy de píxeles de la máscara
             self.committed_canvas = canvas
             self.update_result.emit(canvas)
         else:
+            # NO CAMBIAR: sin máscara, el canvas es la colorización global completa
             self.committed_canvas = pred_rgb.copy()
             self.update_result.emit(pred_rgb)
         self.update()

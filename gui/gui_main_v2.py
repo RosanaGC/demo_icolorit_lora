@@ -1297,6 +1297,8 @@ class IColoriTUIv2(QMainWindow):
                 palette_colors.append(list(h["user_rgb"]))
 
         # ── Guardar committed_canvas (resultado acumulado de regiones) ────────
+        # NO CAMBIAR: committed_canvas se guarda como PNG a win_size.
+        # Es el composite visual completo (base + todas las regiones de máscara).
         canvas_basename = ""
         if dw.committed_canvas is not None:
             canvas_path = path.replace(".iclr", "_canvas.png")
@@ -1304,12 +1306,16 @@ class IColoriTUIv2(QMainWindow):
             canvas_basename = os.path.basename(canvas_path)
 
         # ── Guardar region_mask activa (si existe) ────────────────────────────
+        # NO CAMBIAR: la máscara activa al momento de guardar se persiste como PNG
+        # con valores 0/255. Se restaura en load como array uint8 (0 o 1).
         mask_basename = ""
         if dw.region_mask is not None and np.any(dw.region_mask):
             mask_path = path.replace(".iclr", "_region_mask.png")
             _cv2.imwrite(mask_path, dw.region_mask * 255)
             mask_basename = os.path.basename(mask_path)
 
+        # NO CAMBIAR: estructura del JSON de sesión v1.2 — base de referencia.
+        # Agregar campos nuevos es OK; renombrar o eliminar rompe compatibilidad.
         session = {
             "version":          "1.2",
             "original_path":    getattr(dw, 'image_file', ''),
@@ -1407,6 +1413,8 @@ class IColoriTUIv2(QMainWindow):
         dw = self.drawWidget
 
         # ── Restaurar committed_canvas ────────────────────────────────────────
+        # NO CAMBIAR: committed_canvas se restaura DESPUÉS de _replay_history()
+        # para que pise el canvas que genera el replay. Orden crítico.
         canvas_png = session.get("canvas_png", "")
         canvas_path = os.path.join(session_dir, canvas_png)
         if canvas_png and os.path.exists(canvas_path):
@@ -1420,6 +1428,8 @@ class IColoriTUIv2(QMainWindow):
                 dw.update_result.emit(canvas_rgb)
 
         # ── Restaurar region_mask ─────────────────────────────────────────────
+        # NO CAMBIAR: máscara se restaura como uint8 (valores 0 o 1, no 0/255).
+        # Threshold en 128 para robustez ante compresión PNG.
         mask_png = session.get("region_mask_png", "")
         mask_path = os.path.join(session_dir, mask_png)
         if mask_png and os.path.exists(mask_path):
