@@ -332,14 +332,13 @@ class HoverZoomFilter(QObject):
 
 
 class ColorSwatch(QWidget):
-    """Small square showing a color; emits clicked(r,g,b) on press."""
+    """Small square showing a color; clickeable para usarlo como hint."""
     clicked = pyqtSignal(int, int, int)
 
     def __init__(self, size=40, parent=None):
         super().__init__(parent)
         self.setFixedSize(size, size)
         self._color = QColor(128, 128, 128)
-        self.setCursor(Qt.PointingHandCursor)
 
     def set_from_stylesheet(self, stylesheet: str):
         try:
@@ -614,10 +613,6 @@ class IColoriTUIv2(QMainWindow):
         self._bc_orig_L = None
         self._bc_orig_l_win = None
         self._bc_orig_gray_win = None
-        self._bc_orig_l_full = None
-        # Global BC state (separate from per-mask BC)
-        self._global_brightness = 0
-        self._global_contrast   = 1.0
 
         # ── Core widgets ──────────────────────────────────────────────────────
         self.drawWidget = GUIDrawGTHints(
@@ -634,8 +629,8 @@ class IColoriTUIv2(QMainWindow):
         self.gamutRef    = GUIGamut(gamut_size=110)
         self.palette     = GUIPalette(grid_sz=(10, 2))
         self.palette2    = GUIPalette(grid_sz=(10, 2))   # mirror in Reference tab
-        self.colorSwatch = ColorSwatch(size=36)
-        self.lGraySwatch = ColorSwatch(size=36)
+        self.colorSwatch  = ColorSwatch(size=36)
+        self.lGraySwatch  = ColorSwatch(size=36)
         self.refView     = ZoomableImageView()
         self.refView.setMinimumSize(200, 160)
         self.topColors   = TopColorsWidget(cols=8, rows=2)
@@ -979,7 +974,7 @@ class IColoriTUIv2(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
-        # ── Color swatch + L gray swatch ─────────────────────────────────
+        # ── Color swatch + label ──────────────────────────────────────────
         colorRow = QHBoxLayout()
         colorRow.addWidget(QLabel("Current color:"))
         colorRow.addStretch()
@@ -1168,11 +1163,11 @@ class IColoriTUIv2(QMainWindow):
 
         # color updates
         self.drawWidget.update_color.connect(self.colorSwatch.set_from_stylesheet)
+        self.drawWidget.update_result.connect(self.visWidget.update_result)
+        self.drawWidget.update_result.connect(self._on_result_updated)
         self.drawWidget.update_l_color.connect(self.lGraySwatch.set_from_rgb)
         self.lGraySwatch.clicked.connect(
             lambda r, g, b: self.drawWidget.set_color(np.array([r, g, b], dtype=np.uint8)))
-        self.drawWidget.update_result.connect(self.visWidget.update_result)
-        self.drawWidget.update_result.connect(self._on_result_updated)
 
         # gamut
         self.drawWidget.update_gammut.connect(self.gamutFree.set_gamut)
@@ -1317,46 +1312,34 @@ class IColoriTUIv2(QMainWindow):
                 seen.add(key)
                 palette_colors.append(list(h["user_rgb"]))
 
-        # ── Guardar committed_canvas (resultado acumulado win-size) ─────────────
+        # ── Guardar committed_canvas (resultado acumulado de regiones) ────────
+        # NO CAMBIAR: committed_canvas se guarda como PNG a win_size.
+        # Es el composite visual completo (base + todas las regiones de máscara).
         canvas_basename = ""
         if dw.committed_canvas is not None:
             canvas_path = path.replace(".iclr", "_canvas.png")
             _cv2.imwrite(canvas_path, _cv2.cvtColor(dw.committed_canvas, _cv2.COLOR_RGB2BGR))
             canvas_basename = os.path.basename(canvas_path)
 
-        # ── Guardar committed_canvas_full (resultado acumulado full-res) ──────
-        canvas_full_basename = ""
-        if dw.committed_canvas_full is not None:
-            canvas_full_path = path.replace(".iclr", "_canvas_full.png")
-            _cv2.imwrite(canvas_full_path, _cv2.cvtColor(dw.committed_canvas_full, _cv2.COLOR_RGB2BGR))
-            canvas_full_basename = os.path.basename(canvas_full_path)
-
-        # ── Guardar accumulated_mask (unión de regiones comprometidas) ────────
-        accum_mask_basename = ""
-        if dw.accumulated_mask is not None and np.any(dw.accumulated_mask):
-            accum_mask_path = path.replace(".iclr", "_accum_mask.png")
-            _cv2.imwrite(accum_mask_path, dw.accumulated_mask.astype(np.uint8) * 255)
-            accum_mask_basename = os.path.basename(accum_mask_path)
-
         # ── Guardar region_mask activa (si existe) ────────────────────────────
+        # NO CAMBIAR: la máscara activa al momento de guardar se persiste como PNG
+        # con valores 0/255. Se restaura en load como array uint8 (0 o 1).
         mask_basename = ""
         if dw.region_mask is not None and np.any(dw.region_mask):
             mask_path = path.replace(".iclr", "_region_mask.png")
             _cv2.imwrite(mask_path, dw.region_mask * 255)
             mask_basename = os.path.basename(mask_path)
 
+        # NO CAMBIAR: estructura del JSON de sesión v1.2 — base de referencia.
+        # Agregar campos nuevos es OK; renombrar o eliminar rompe compatibilidad.
         session = {
-            "version":          "1.3",
+            "version":          "1.2",
             "original_path":    getattr(dw, 'image_file', ''),
             "target_png":       os.path.basename(png_path),
             "canvas_png":       canvas_basename,
-            "canvas_full_png":  canvas_full_basename,
-            "accum_mask_png":   accum_mask_basename,
             "region_mask_png":  mask_basename,
             "brightness":       0,    # adjustments are baked into target_png
             "contrast":         100,
-            "global_brightness": self._global_brightness,
-            "global_contrast":   self._global_contrast,
             "palette_colors":   palette_colors,
             "hints":            hints,
         }
@@ -1445,7 +1428,9 @@ class IColoriTUIv2(QMainWindow):
 
         dw = self.drawWidget
 
-        # ── Restaurar committed_canvas (win-size) ────────────────────────────
+        # ── Restaurar committed_canvas ────────────────────────────────────────
+        # NO CAMBIAR: committed_canvas se restaura DESPUÉS de _replay_history()
+        # para que pise el canvas que genera el replay. Orden crítico.
         canvas_png = session.get("canvas_png", "")
         canvas_path = os.path.join(session_dir, canvas_png)
         if canvas_png and os.path.exists(canvas_path):
@@ -1458,34 +1443,9 @@ class IColoriTUIv2(QMainWindow):
                 dw.committed_canvas = canvas_rgb
                 dw.update_result.emit(canvas_rgb)
 
-        # ── Restaurar committed_canvas_full (full-res) ────────────────────────
-        canvas_full_png = session.get("canvas_full_png", "")
-        canvas_full_path = os.path.join(session_dir, canvas_full_png)
-        if canvas_full_png and os.path.exists(canvas_full_path):
-            cf_bgr = _cv2.imdecode(np.fromfile(canvas_full_path, dtype=np.uint8), _cv2.IMREAD_COLOR)
-            if cf_bgr is not None:
-                dw.committed_canvas_full = _cv2.cvtColor(cf_bgr, _cv2.COLOR_BGR2RGB)
-
-        # ── Restaurar accumulated_mask ────────────────────────────────────────
-        accum_mask_png = session.get("accum_mask_png", "")
-        accum_mask_path = os.path.join(session_dir, accum_mask_png)
-        if accum_mask_png and os.path.exists(accum_mask_path):
-            am_gray = _cv2.imdecode(np.fromfile(accum_mask_path, dtype=np.uint8), _cv2.IMREAD_GRAYSCALE)
-            if am_gray is not None:
-                if am_gray.shape != (dw.win_h, dw.win_w):
-                    am_gray = _cv2.resize(am_gray, (dw.win_w, dw.win_h),
-                                          interpolation=_cv2.INTER_NEAREST)
-                dw.accumulated_mask = (am_gray > 128)
-                # También reconstruir la versión full-res del accumulated_mask
-                h_full, w_full = dw.im_full.shape[:2]
-                am_full = _cv2.resize(am_gray, (w_full, h_full), interpolation=_cv2.INTER_NEAREST)
-                dw.accumulated_mask_full = (am_full > 128)
-
-        # ── Restaurar BC global ───────────────────────────────────────────────
-        self._global_brightness = session.get("global_brightness", 0)
-        self._global_contrast   = session.get("global_contrast",   1.0)
-
         # ── Restaurar region_mask ─────────────────────────────────────────────
+        # NO CAMBIAR: máscara se restaura como uint8 (valores 0 o 1, no 0/255).
+        # Threshold en 128 para robustez ante compresión PNG.
         mask_png = session.get("region_mask_png", "")
         mask_path = os.path.join(session_dir, mask_png)
         if mask_png and os.path.exists(mask_path):
@@ -1539,57 +1499,31 @@ class IColoriTUIv2(QMainWindow):
 
     def _apply_bc_adjustment(self, brightness: float, contrast: float,
                               run_model: bool = False):
-        import cv2 as _cv2
         dw = self.drawWidget
-        has_mask = (dw.region_mask is not None and np.any(dw.region_mask))
-
         # Store originals on first touch
         if self._bc_orig_L is None:
             self._bc_orig_L        = dw.im_lab[:, :, 0].copy()
             self._bc_orig_l_win    = dw.l_win.copy()
             self._bc_orig_gray_win = dw.gray_win.copy()
-            self._bc_orig_l_full   = dw.l_full.copy()
             self._btnResetBC.setEnabled(True)
 
-        def transform(L, b, c):
-            return np.clip((L - 50.0) * c + 50.0 + b, 0.0, 100.0)
+        def transform(L):
+            return np.clip((L - 50.0) * contrast + 50.0 + brightness, 0.0, 100.0)
 
-        # Apply requested BC so the model uses it for this computation
-        new_L_224          = transform(self._bc_orig_L, brightness, contrast).astype(np.float32)
+        new_L_224          = transform(self._bc_orig_L).astype(np.float32)
         dw.im_lab[:, :, 0] = new_L_224
         dw.im_l            = dw.im_lab[:, :, 0]
-        dw.l_win           = transform(self._bc_orig_l_win, brightness, contrast).astype(np.float32)
-        dw.l_full          = transform(self._bc_orig_l_full, brightness, contrast).astype(np.float32)
+        dw.l_win           = transform(self._bc_orig_l_win).astype(np.float32)
 
+        import cv2 as _cv2
         gray_u8 = np.clip(new_L_224 / 100.0 * 255.0, 0, 255).astype(np.uint8)
         dw.gray_win = _cv2.resize(
             np.stack([gray_u8, gray_u8, gray_u8], axis=-1),
             (dw.win_w, dw.win_h), interpolation=_cv2.INTER_CUBIC
         )
         dw.update()
-
         if run_model and dw.result is not None:
-            dw.compute_result(_force_mask_composite=True if has_mask else None)
-
-            if not has_mask:
-                # BC change without mask → becomes the new global BC
-                self._global_brightness = brightness
-                self._global_contrast   = contrast
-            else:
-                # BC change within mask → baked into committed_canvas for that region;
-                # restore l_win/l_full to global BC so future no-mask computations
-                # are not polluted by this mask's BC.
-                gb, gc = self._global_brightness, self._global_contrast
-                new_L_global          = transform(self._bc_orig_L, gb, gc).astype(np.float32)
-                dw.im_lab[:, :, 0]    = new_L_global
-                dw.im_l               = dw.im_lab[:, :, 0]
-                dw.l_win              = transform(self._bc_orig_l_win,  gb, gc).astype(np.float32)
-                dw.l_full             = transform(self._bc_orig_l_full, gb, gc).astype(np.float32)
-                gray_global           = np.clip(new_L_global / 100.0 * 255.0, 0, 255).astype(np.uint8)
-                dw.gray_win           = _cv2.resize(
-                    np.stack([gray_global, gray_global, gray_global], axis=-1),
-                    (dw.win_w, dw.win_h), interpolation=_cv2.INTER_CUBIC
-                )
+            dw.compute_result()
 
     def _reset_bc_adjustment(self):
         if self._bc_orig_L is None:
@@ -1599,11 +1533,9 @@ class IColoriTUIv2(QMainWindow):
         dw.im_l            = dw.im_lab[:, :, 0]
         dw.l_win           = self._bc_orig_l_win
         dw.gray_win        = self._bc_orig_gray_win
-        dw.l_full          = self._bc_orig_l_full
         self._bc_orig_L        = None
         self._bc_orig_l_win    = None
         self._bc_orig_gray_win = None
-        self._bc_orig_l_full   = None
         self._brightnessSlider.blockSignals(True)
         self._contrastSlider.blockSignals(True)
         self._brightnessSlider.setValue(0)
@@ -1613,8 +1545,6 @@ class IColoriTUIv2(QMainWindow):
         self._brightnessVal.setText("0")
         self._contrastVal.setText("1.00×")
         self._btnResetBC.setEnabled(False)
-        self._global_brightness = 0
-        self._global_contrast   = 1.0
         dw.update()
         if dw.result is not None:
             dw.compute_result()
@@ -1639,8 +1569,6 @@ class IColoriTUIv2(QMainWindow):
         self._brightnessVal.setText("0")
         self._contrastVal.setText("1.00×")
         self._btnResetBC.setEnabled(False)
-        self._global_brightness = 0
-        self._global_contrast   = 1.0
 
     def _zoom_draw_to_fit(self):
         """Ajusta el zoom para que el canvas llene el scroll area disponible."""
