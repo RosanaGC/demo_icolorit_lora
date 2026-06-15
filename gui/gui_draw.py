@@ -407,7 +407,15 @@ class GUIDraw(QWidget):
         dst_dir = os.path.join(dir_path, f"icolor_{ts}") if make_subdir else dir_path
         os.makedirs(dst_dir, exist_ok=True)
 
-        out = self.result_full if self.result_full is not None else self.result
+        # Usar committed_canvas (lo que se visualiza) escalado a resolución original.
+        # Si no hay committed_canvas, caer a result_full o result.
+        if self.committed_canvas is not None:
+            h_full, w_full = self.im_full.shape[:2]
+            out = cv2.resize(self.committed_canvas, (w_full, h_full), interpolation=cv2.INTER_CUBIC)
+        elif self.result_full is not None:
+            out = self.result_full
+        else:
+            out = self.result
         result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         mask_bin = (self.im_mask0.transpose((1, 2, 0)).astype(np.uint8) * 255)  # (H,W,1)
         cv2.imwrite(os.path.join(dst_dir, "ours.png"), result_bgr)
@@ -499,8 +507,14 @@ class GUIDraw(QWidget):
         out_dir = os.path.dirname(base_path)
         os.makedirs(out_dir, exist_ok=True)
 
-        # reutilizamos save_result pero sin subcarpeta: escribimos variantes con sufijo
-        out = self.result_full if self.result_full is not None else self.result
+        # Usar committed_canvas (lo que se visualiza) escalado a resolución original.
+        if self.committed_canvas is not None:
+            h_full, w_full = self.im_full.shape[:2]
+            out = cv2.resize(self.committed_canvas, (w_full, h_full), interpolation=cv2.INTER_CUBIC)
+        elif self.result_full is not None:
+            out = self.result_full
+        else:
+            out = self.result
         result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         cv2.imwrite(f"{base_path}_ours.png", result_bgr)
 
