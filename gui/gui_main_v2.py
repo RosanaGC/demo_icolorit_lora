@@ -332,20 +332,29 @@ class HoverZoomFilter(QObject):
 
 
 class ColorSwatch(QWidget):
-    """Small square showing the current hint color."""
+    """Small square showing a color; clickeable para usarlo como hint."""
+    clicked = pyqtSignal(int, int, int)
+
     def __init__(self, size=40, parent=None):
         super().__init__(parent)
         self.setFixedSize(size, size)
         self._color = QColor(128, 128, 128)
 
     def set_from_stylesheet(self, stylesheet: str):
-        # stylesheet is "background-color: #rrggbb"
         try:
             hex_str = stylesheet.split(":")[-1].strip()
             self._color = QColor(hex_str)
         except Exception:
             pass
         self.update()
+
+    def set_from_rgb(self, rgb):
+        self._color = QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self.update()
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self.clicked.emit(self._color.red(), self._color.green(), self._color.blue())
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -620,7 +629,8 @@ class IColoriTUIv2(QMainWindow):
         self.gamutRef    = GUIGamut(gamut_size=110)
         self.palette     = GUIPalette(grid_sz=(10, 2))
         self.palette2    = GUIPalette(grid_sz=(10, 2))   # mirror in Reference tab
-        self.colorSwatch = ColorSwatch(size=36)
+        self.colorSwatch  = ColorSwatch(size=36)
+        self.lGraySwatch  = ColorSwatch(size=36)
         self.refView     = ZoomableImageView()
         self.refView.setMinimumSize(200, 160)
         self.topColors   = TopColorsWidget(cols=8, rows=2)
@@ -969,6 +979,9 @@ class IColoriTUIv2(QMainWindow):
         colorRow.addWidget(QLabel("Current color:"))
         colorRow.addStretch()
         colorRow.addWidget(self.colorSwatch)
+        colorRow.addSpacing(12)
+        colorRow.addWidget(QLabel("L gray:"))
+        colorRow.addWidget(self.lGraySwatch)
         layout.addLayout(colorRow)
 
         # ── Tabs: Color / Reference ────────────────────────────────────────
@@ -1152,6 +1165,9 @@ class IColoriTUIv2(QMainWindow):
         self.drawWidget.update_color.connect(self.colorSwatch.set_from_stylesheet)
         self.drawWidget.update_result.connect(self.visWidget.update_result)
         self.drawWidget.update_result.connect(self._on_result_updated)
+        self.drawWidget.update_l_color.connect(self.lGraySwatch.set_from_rgb)
+        self.lGraySwatch.clicked.connect(
+            lambda r, g, b: self.drawWidget.set_color(np.array([r, g, b], dtype=np.uint8)))
 
         # gamut
         self.drawWidget.update_gammut.connect(self.gamutFree.set_gamut)

@@ -44,6 +44,7 @@ class GUIDraw(QWidget):
     used_colors = pyqtSignal(object)
     update_ab = pyqtSignal(object)
     update_result = pyqtSignal(object)
+    update_l_color = pyqtSignal(object)   # emite rgb uint8 del gris L del pixel clickeado
 
     # NUEVO: para alinear el panel derecho
     canvas_geom_changed = pyqtSignal(int, int, int, int, float) # dw, dh, win_w, win_h, zoom
@@ -338,6 +339,11 @@ class GUIDraw(QWidget):
             x, y = self.scale_point(pos)
             L = self.im_lab[y, x, 0]
             self.update_gammut.emit(L)
+
+            # Emitir el gris equivalente al valor L del píxel
+            gray_rgb = (np.clip(color.lab2rgb(np.array([[[L, 0.0, 0.0]]])), 0, 1) * 255
+                        ).astype(np.uint8)[0, 0]
+            self.update_l_color.emit(gray_rgb)
 
             used_colors = self.uiControl.used_colors()
             self.used_colors.emit(used_colors)
