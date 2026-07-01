@@ -8,8 +8,12 @@ __pycache__/
 
 # datos y salidas
 outputs/
-samples/*.orig.*
+samples/
 logs/
 
 # pesos / artefactos grandes
 checks/
+
+# estado de apps ajenas al proyecto
+.dock_state.bin
+.geom_state.bin
