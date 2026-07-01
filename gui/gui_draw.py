@@ -648,10 +648,14 @@ class GUIDraw(QWidget):
         pred_rgb = (np.clip(color.lab2rgb(pred_lab), 0, 1) * 255).astype('uint8')
         self.result = pred_rgb
 
-        h_full, w_full = self.im_full.shape[:2]
-        ab_full = cv2.resize(ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
-        pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
-        self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
+        # Comentado para probar performance: result_full es un cálculo a resolución
+        # completa que corría en cada edición pero cuyo único consumidor (el
+        # fallback "elif self.result_full is not None" en save_result/save_result_as)
+        # nunca se activa, porque committed_canvas siempre se setea junto con esto.
+        # h_full, w_full = self.im_full.shape[:2]
+        # ab_full = cv2.resize(ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
+        # pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
+        # self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
         # ── Compositing ───────────────────────────────────────────────────────
         # NO CAMBIAR: lógica de referencia acordada en bug_fix branch (2026-06-15).
