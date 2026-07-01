@@ -1,0 +1,96 @@
+name: Build Windows exe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install CPU-only torch
+        timeout-minutes: 20
+        run: |
+          pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install dependencies
+        timeout-minutes: 15
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller pyinstaller-hooks-contrib
+
+      - name: Convert icon
+        run: |
+          python -c "from PIL import Image; img=Image.open('gui/icon.png'); img.save('gui/icon.ico')"
+        continue-on-error: true
+
+      - name: Patch spec to use icon.ico
+        shell: pwsh
+        run: |
+          (Get-Content icolorit_v2.spec) `
+            -replace '# icon="gui/icon.ico",', 'icon="gui/icon.ico",' |
+          Set-Content icolorit_v2.spec
+        continue-on-error: true
+
+      - name: Build with PyInstaller
+        timeout-minutes: 30
+        run: |
+          pyinstaller icolorit_v2.spec --noconfirm --clean
+
+      - name: Bundle VC++ Runtime DLLs into _internal
+        shell: cmd
+        run: |
+          copy "%SystemRoot%\System32\MSVCP140.dll"      "dist\iColoriT_LoRA\_internal\"
+          copy "%SystemRoot%\System32\VCRUNTIME140.dll"  "dist\iColoriT_LoRA\_internal\"
+          copy "%SystemRoot%\System32\VCRUNTIME140_1.dll" "dist\iColoriT_LoRA\_internal\"
+
+      - name: Create checks placeholder
+        run: |
+          mkdir dist\iColoriT_LoRA\checks
+          echo Copy your .pth checkpoint files here > dist\iColoriT_LoRA\checks\README.txt
+
+      - name: Create launcher
+        shell: cmd
+        run: |
+          (
+            echo @echo off
+            echo REM  iColoriT LoRA — Launcher
+            echo cd /d "%%~dp0"
+            echo if exist vc_redist.x64.exe (
+            echo     echo Instalando Visual C++ Redistributable...
+            echo     vc_redist.x64.exe /install /quiet /norestart
+            echo ^)
+            echo echo Iniciando iColoriT LoRA...
+            echo iColoriT_LoRA.exe ^> icolorit_log.txt 2^>^&1
+            echo set EXIT_CODE=%%errorlevel%%
+            echo if %%EXIT_CODE%% neq 0 (
+            echo     echo.
+            echo     echo === ERROR — exit code %%EXIT_CODE%% ===
+            echo     type icolorit_log.txt
+            echo     echo.
+            echo     pause
+            echo ^)
+          ) > dist\iColoriT_LoRA\run_icolorit.bat
+
+      - name: Bundle VC++ Redistributable
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" -OutFile "dist\iColoriT_LoRA\vc_redist.x64.exe"
+          'Si iColoriT_LoRA.exe no abre, corre vc_redist.x64.exe primero y reinicia.' | Set-Content "dist\iColoriT_LoRA\INSTALL_FIRST.txt"
+        continue-on-error: true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iColoriT_LoRA_windows
+          path: dist\iColoriT_LoRA\
+          retention-days: 7

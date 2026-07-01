@@ -8,12 +8,12 @@ import numpy as np
 import torch
 from einops import rearrange
 from PyQt5.QtCore import QPoint, QSize, Qt, pyqtSignal, QRect
-from PyQt5.QtGui import QColor, QImage, QPainter, QTransform
+from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QPen, QTransform
 from PyQt5.QtWidgets import QApplication, QFileDialog, QWidget
 
 from skimage import color
 
-from .lab_gamut import snap_ab
+from .lab_gamut import lab2rgb_1d, snap_ab
 from .ui_control import UIControl
 
 
@@ -44,6 +44,7 @@ class GUIDraw(QWidget):
     used_colors = pyqtSignal(object)
     update_ab = pyqtSignal(object)
     update_result = pyqtSignal(object)
+    update_l_color = pyqtSignal(object)   # emite rgb uint8 del gris L del pixel clickeado
 
     # NUEVO: para alinear el panel derecho
     canvas_geom_changed = pyqtSignal(int, int, int, int, float) # dw, dh, win_w, win_h, zoom
@@ -82,6 +83,17 @@ class GUIDraw(QWidget):
 
         # ---- Carpeta de guardado (opcional) ----
         self.save_dir = None
+
+        # ---- Máscara / Region compositing ----
+        self.mask_tool        = None   # 'brush' | 'rect' | 'lasso' | None
+        self.region_mask      = None   # uint8 ndarray (win_h, win_w) o None
+        self.committed_canvas = None   # uint8 ndarray (win_h, win_w, 3) o None
+        self.mask_brush_size  = 20     # px en espacio de imagen (win_w × win_h)
+        self._mask_shapes     = []     # list[np.ndarray] — una por lasso/rect, para undo
+        self._mask_rect_start = None   # QPoint
+        self._mask_lasso_pts  = []     # list[QPoint]
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
 
     # -------------------- Helpers zoom/coords --------------------
     def _zoom_dims(self):
@@ -133,8 +145,15 @@ class GUIDraw(QWidget):
     def read_image(self, image_file):
         self.image_loaded = True
         self.image_file = image_file
-        im_bgr = cv2.imread(image_file)
+        # cv2.imread fails on Windows paths with non-ASCII characters; use imdecode instead
+        raw = np.fromfile(image_file, dtype=np.uint8)
+        im_bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        if im_bgr is None:
+            raise FileNotFoundError(f"Could not read image: {image_file}")
         self.im_full = im_bgr.copy()
+        lab_full = color.rgb2lab(im_bgr[:, :, ::-1])
+        self.l_full = lab_full[:, :, 0]
+        self.result_full = None
 
         # preparar imagen ajustada al lienzo
         h, w, _ = self.im_full.shape
@@ -173,6 +192,15 @@ class GUIDraw(QWidget):
         self.im_mask0 = np.zeros((1, self.load_size, self.load_size))
         #self.brushWidth = 2 * self.scale
         self.brushWidth = 1.0
+
+        # Resetear máscara al cargar nueva imagen
+        self.region_mask      = None
+        self.committed_canvas = None
+        self._mask_shapes     = []
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
 
         # avisar geometría base (zoom=1) al resto de la UI
         self.canvas_geom_changed.emit(self.dw, self.dh, self.win_w, self.win_h, float(self.zoom))
@@ -227,7 +255,13 @@ class GUIDraw(QWidget):
         is_predict = False
 
         # Color “snap” usando L local (scale_point ya contempla zoom)
-        snap_qcolor = self.calibrate_color(self.user_color, self.pos)
+        if self._exact_hint_ab is not None:
+            x, y = self.scale_point(self.pos)
+            lab = np.array([self.im_l[y, x], self._exact_hint_ab[0], self._exact_hint_ab[1]], dtype=np.float32)
+            exact_rgb = lab2rgb_1d(lab, clip=True, dtype='uint8')
+            snap_qcolor = QColor(int(exact_rgb[0]), int(exact_rgb[1]), int(exact_rgb[2]))
+        else:
+            snap_qcolor = self.calibrate_color(self.user_color, self.pos)
         self.color = snap_qcolor
         self.update_color.emit(str('background-color: %s' % self.color.name()))
 
@@ -237,10 +271,14 @@ class GUIDraw(QWidget):
         if self.ui_mode == 'point':
             if move_point:
                 self.uiControl.movePoint(pos_base, snap_qcolor, self.user_color, self.brushWidth)
+                self.uiControl.update_exact_ab(self._exact_hint_ab)
             else:
-                self.user_color, self.brushWidth, isNew = self.uiControl.addPoint(
+                self.user_color, self.brushWidth, exact_ab, isNew = self.uiControl.addPoint(
                     pos_base, snap_qcolor, self.user_color, self.brushWidth
                 )
+                if exact_ab is not None:
+                    self._exact_hint_ab = exact_ab
+                self.uiControl.update_exact_ab(self._exact_hint_ab)
                 if isNew:
                     is_predict = True
 
@@ -258,12 +296,20 @@ class GUIDraw(QWidget):
         self.ui_mode = 'none'
         self.pos = None
         self.result = None
+        self.result_full = None
         self.user_color = None
         self.color = None
         self.uiControl.reset()
         self.init_color()
         self._history.clear()
         self._redo.clear()
+        self.region_mask      = None
+        self.committed_canvas = None
+        self._mask_shapes     = []
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
         self.compute_result()
         self.update()
 
@@ -286,12 +332,18 @@ class GUIDraw(QWidget):
     def init_color(self):
         self.user_color = QColor(128, 128, 128)  # gris por defecto
         self.color = self.user_color
+        self._exact_hint_ab = None
 
     def change_color(self, pos=None):
         if pos is not None:
             x, y = self.scale_point(pos)
             L = self.im_lab[y, x, 0]
             self.update_gammut.emit(L)
+
+            # Emitir el gris equivalente al valor L del píxel
+            gray_rgb = (np.clip(color.lab2rgb(np.array([[[L, 0.0, 0.0]]])), 0, 1) * 255
+                        ).astype(np.uint8)[0, 0]
+            self.update_l_color.emit(gray_rgb)
 
             used_colors = self.uiControl.used_colors()
             self.used_colors.emit(used_colors)
@@ -311,10 +363,23 @@ class GUIDraw(QWidget):
         # llamada desde el gamut: si no hay self.pos, evitamos crash
         c = QColor(int(c_rgb[0]), int(c_rgb[1]), int(c_rgb[2]))
         self.user_color = c
+        self._exact_hint_ab = None
         snap_qcolor = c if self.pos is None else self.calibrate_color(c, self.pos)
         self.color = snap_qcolor
         self.update_color.emit(str('background-color: %s' % self.color.name()))
         self.uiControl.update_color(snap_qcolor, self.user_color)
+        self.compute_result()
+        self.update()
+
+    def set_color_from_lab(self, payload):
+        rgb = np.array(payload["rgb"], dtype=np.uint8)
+        lab = np.array(payload["lab"], dtype=np.float32)
+        self.user_color = QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self.color = QColor(int(rgb[0]), int(rgb[1]), int(rgb[2]))
+        self._exact_hint_ab = (float(lab[1]), float(lab[2]))
+        self.update_color.emit(str('background-color: %s' % self.color.name()))
+        self.uiControl.update_color(self.color, self.user_color)
+        self.uiControl.update_exact_ab(self._exact_hint_ab)
         self.compute_result()
         self.update()
 
@@ -348,7 +413,16 @@ class GUIDraw(QWidget):
         dst_dir = os.path.join(dir_path, f"icolor_{ts}") if make_subdir else dir_path
         os.makedirs(dst_dir, exist_ok=True)
 
-        result_bgr = cv2.cvtColor(self.result, cv2.COLOR_RGB2BGR)
+        # Usar committed_canvas (lo que se visualiza) escalado a resolución original.
+        # Si no hay committed_canvas, caer a result_full o result.
+        if self.committed_canvas is not None:
+            h_full, w_full = self.im_full.shape[:2]
+            out = cv2.resize(self.committed_canvas, (w_full, h_full), interpolation=cv2.INTER_CUBIC)
+        elif self.result_full is not None:
+            out = self.result_full
+        else:
+            out = self.result
+        result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         mask_bin = (self.im_mask0.transpose((1, 2, 0)).astype(np.uint8) * 255)  # (H,W,1)
         cv2.imwrite(os.path.join(dst_dir, "ours.png"), result_bgr)
         cv2.imwrite(os.path.join(dst_dir, "input_mask.png"), mask_bin)
@@ -439,8 +513,15 @@ class GUIDraw(QWidget):
         out_dir = os.path.dirname(base_path)
         os.makedirs(out_dir, exist_ok=True)
 
-        # reutilizamos save_result pero sin subcarpeta: escribimos variantes con sufijo
-        result_bgr = cv2.cvtColor(self.result, cv2.COLOR_RGB2BGR)
+        # Usar committed_canvas (lo que se visualiza) escalado a resolución original.
+        if self.committed_canvas is not None:
+            h_full, w_full = self.im_full.shape[:2]
+            out = cv2.resize(self.committed_canvas, (w_full, h_full), interpolation=cv2.INTER_CUBIC)
+        elif self.result_full is not None:
+            out = self.result_full
+        else:
+            out = self.result
+        result_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
         cv2.imwrite(f"{base_path}_ours.png", result_bgr)
 
         mask_bin = (self.im_mask0.transpose((1, 2, 0)).astype(np.uint8) * 255)
@@ -543,6 +624,9 @@ class GUIDraw(QWidget):
         self.im_mask0 = im_mask0.transpose((2, 0, 1))  # (1,H,W)
         im_lab = color.rgb2lab(im).transpose((2, 0, 1))  # (3,H,W)
         self.im_ab0 = im_lab[1:3, :, :]
+        hint_ab = self.uiControl.get_hint_ab_map(self.load_size, self.load_size)
+        if hint_ab is not None:
+            self.im_ab0 = hint_ab
 
         _im_lab = self.im_lab.transpose((2, 0, 1))
         _im_lab = np.concatenate(((_im_lab[[0], :, :] - 50) / 100, _im_lab[1:, :, :] / 110), axis=0)
@@ -563,16 +647,46 @@ class GUIDraw(QWidget):
         pred_lab = np.concatenate((self.l_win[..., np.newaxis], ab_win), axis=2)
         pred_rgb = (np.clip(color.lab2rgb(pred_lab), 0, 1) * 255).astype('uint8')
         self.result = pred_rgb
-        self.update_result.emit(self.result)
+
+        h_full, w_full = self.im_full.shape[:2]
+        ab_full = cv2.resize(ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
+        pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
+        self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
+
+        # ── Compositing ───────────────────────────────────────────────────────
+        # NO CAMBIAR: lógica de referencia acordada en bug_fix branch (2026-06-15).
+        # Con máscara activa: copia hard-copy de pred_rgb solo en la región de la
+        # máscara sobre el canvas acumulado.  Sin máscara: reemplaza canvas completo.
+        # Este comportamiento es la base estable desde la cual se hacen mejoras.
+        if self.region_mask is not None and np.any(self.region_mask):
+            if self.committed_canvas is None:
+                # NO CAMBIAR: inicializar canvas en negro la primera vez
+                self.committed_canvas = np.zeros((self.win_h, self.win_w, 3), dtype=np.uint8)
+            canvas = self.committed_canvas.copy()
+            m = self.region_mask.astype(bool)
+            canvas[m] = pred_rgb[m]   # NO CAMBIAR: hard copy de píxeles de la máscara
+            self.committed_canvas = canvas
+            self.update_result.emit(canvas)
+        else:
+            # NO CAMBIAR: sin máscara, el canvas es la colorización global completa
+            self.committed_canvas = pred_rgb.copy()
+            self.update_result.emit(pred_rgb)
         self.update()
 
     # -------------------- Pintado --------------------
     def paintEvent(self, event):
         p = QPainter(self)
-        p.fillRect(event.rect(), QColor(255, 255, 255))
+        p.fillRect(event.rect(), QColor(30, 30, 46))
+        if not self.image_loaded:
+            p.setPen(QColor(69, 71, 90))
+            p.setFont(QFont("Arial", 14))
+            p.drawText(event.rect(), Qt.AlignCenter, "Drop an image here\nor use  📂 Load")
+            p.end()
+            return
         p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
 
-        im = self.gray_win if (self.use_gray or self.result is None) else self.result
+        im = getattr(self, 'gray_win', None) if (self.use_gray or self.result is None) else self.result
         if im is not None:
             im_c = np.ascontiguousarray(im, dtype=np.uint8)  # asegurar strides
             h, w = im_c.shape[:2]
@@ -581,12 +695,18 @@ class GUIDraw(QWidget):
             dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
             p.drawImage(QRect(dw_z, dh_z, ww_z, wh_z), qImg, QRect(0, 0, w, h))
 
+        # Overlay semitransparente de la máscara activa
+        self._draw_mask_overlay(p)
+
         # Hints en coords base con la afín de zoom
         sx, sy, tx, ty = self._affine_params()
         p.save()
         p.setWorldTransform(QTransform(sx, 0, 0, sy, tx, ty), combine=True)
         self.uiControl.update_painter(p)
         p.restore()
+
+        # Preview del tool de máscara en curso (rect/lasso)
+        self._draw_mask_preview(p)
         p.end()
 
     def sizeHint(self):
@@ -637,6 +757,8 @@ class GUIDraw(QWidget):
                 self._current_action["pos"] = (pos_base.x(), pos_base.y())
 
     def mouseReleaseEvent(self, event):
+        if self.handle_mask_release(event):
+            return
         if self._dragging and self._current_action and self.ui_mode == 'point' and self.pos is not None:
             if not self._current_action.get("pos"):
                 pos_base = self._to_base_coords(self.pos)
@@ -663,6 +785,9 @@ class GUIDraw(QWidget):
         self.update()
 
     def undo(self):
+        if self.mask_tool is not None and self._mask_shapes:
+            self.undo_mask_shape()
+            return
         if not self._history:
             return
         last = self._history.pop()
@@ -675,5 +800,194 @@ class GUIDraw(QWidget):
         act = self._redo.pop()
         self._history.append(act)
         self._replay_history()
+
+    # ── Máscara / Region compositing ─────────────────────────────────────────
+
+    def set_mask_tool(self, tool):
+        """Activa un tool de máscara: 'brush' | 'rect' | 'lasso' | None."""
+        self.mask_tool        = tool
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
+        self.update()
+
+    def clear_mask(self):
+        """Borra solo la máscara activa (canvas e hints se conservan)."""
+        self.region_mask      = None
+        self._mask_shapes     = []
+        self._mask_rect_start = None
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
+        self.update()
+
+    def _rebuild_region_mask(self):
+        if not self._mask_shapes:
+            self.region_mask = None
+            return
+        result = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+        for shape in self._mask_shapes:
+            np.bitwise_or(result, shape, out=result)
+        self.region_mask = result
+
+    def undo_mask_shape(self):
+        if self._mask_shapes:
+            self._mask_shapes.pop()
+            self._rebuild_region_mask()
+            self.update()
+
+    def cancel_lasso(self):
+        self._mask_lasso_pts  = []
+        self._mask_is_drawing = False
+        self._mask_cursor_pos = None
+        self.update()
+
+    def _ensure_mask(self):
+        if not hasattr(self, 'win_h') or not hasattr(self, 'win_w'):
+            return
+        if self.region_mask is None:
+            self.region_mask = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+
+    def _widget_to_img(self, pos):
+        """Convierte posición en el widget (con zoom) a coords de imagen (win_w × win_h)."""
+        dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
+        x = int((pos.x() - dw_z) / max(1, ww_z) * self.win_w)
+        y = int((pos.y() - dh_z) / max(1, wh_z) * self.win_h)
+        return (max(0, min(self.win_w - 1, x)),
+                max(0, min(self.win_h - 1, y)))
+
+    def _paint_brush_mask(self, pos, erase=False):
+        self._ensure_mask()
+        x, y = self._widget_to_img(pos)
+        cv2.circle(self.region_mask, (x, y), max(1, self.mask_brush_size),
+                   0 if erase else 1, -1)
+        self.update()
+
+    def _fill_rect_mask(self, p1, p2):
+        self._ensure_mask()
+        x1, y1 = self._widget_to_img(p1)
+        x2, y2 = self._widget_to_img(p2)
+        x1, x2 = min(x1, x2), max(x1, x2)
+        y1, y2 = min(y1, y2), max(y1, y2)
+        shape = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+        shape[y1:y2 + 1, x1:x2 + 1] = 1
+        self._mask_shapes.append(shape)
+        np.bitwise_or(self.region_mask, shape, out=self.region_mask)
+        self.update()
+
+    def _fill_lasso_mask(self, pts):
+        if len(pts) < 3:
+            return
+        self._ensure_mask()
+        shape = np.zeros((self.win_h, self.win_w), dtype=np.uint8)
+        img_pts = np.array([self._widget_to_img(p) for p in pts], dtype=np.int32)
+        cv2.fillPoly(shape, [img_pts], 1)
+        self._mask_shapes.append(shape)
+        np.bitwise_or(self.region_mask, shape, out=self.region_mask)
+        self.update()
+
+    def _draw_mask_overlay(self, painter):
+        if self.region_mask is None or not np.any(self.region_mask):
+            return
+        if not hasattr(self, 'win_h') or not hasattr(self, 'win_w'):
+            return
+        dw_z, dh_z, ww_z, wh_z = self._zoom_dims()
+        H, W = self.region_mask.shape
+        overlay = np.zeros((H, W, 4), dtype=np.uint8)
+        overlay[self.region_mask.astype(bool)] = [100, 149, 237, 90]
+        overlay_c = np.ascontiguousarray(overlay)
+        qimg = QImage(overlay_c.data, W, H, 4 * W, QImage.Format_RGBA8888)
+        painter.drawImage(QRect(dw_z, dh_z, ww_z, wh_z), qimg, QRect(0, 0, W, H))
+
+    def _draw_mask_preview(self, painter):
+        if not self.image_loaded:
+            return
+        if (self.mask_tool == 'rect' and self._mask_is_drawing
+                and self._mask_rect_start and self._mask_cursor_pos):
+            pen = QPen(QColor(100, 149, 237, 200), 2, Qt.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            p1, p2 = self._mask_rect_start, self._mask_cursor_pos
+            painter.drawRect(QRect(
+                min(p1.x(), p2.x()), min(p1.y(), p2.y()),
+                abs(p1.x() - p2.x()), abs(p1.y() - p2.y())
+            ))
+        elif self.mask_tool == 'lasso' and self._mask_lasso_pts:
+            pen = QPen(QColor(100, 149, 237, 200), 2, Qt.SolidLine)
+            painter.setPen(pen)
+            pts = self._mask_lasso_pts
+            for i in range(len(pts) - 1):
+                painter.drawLine(pts[i], pts[i + 1])
+            if self._mask_cursor_pos and self._mask_is_drawing:
+                painter.drawLine(pts[-1], self._mask_cursor_pos)
+                if len(pts) >= 2:
+                    # closing edge: cursor → first point
+                    close_pen = QPen(QColor(100, 149, 237, 110), 1, Qt.DashLine)
+                    painter.setPen(close_pen)
+                    painter.drawLine(self._mask_cursor_pos, pts[0])
+
+    def handle_mask_press(self, event):
+        """Devuelve True si el evento fue consumido por el tool de máscara."""
+        if self.mask_tool is None or not self.image_loaded:
+            return False
+        pos = event.pos()
+        if self.mask_tool == 'brush':
+            if event.button() == Qt.LeftButton:
+                self._paint_brush_mask(pos, erase=False)
+            elif event.button() == Qt.RightButton:
+                self._paint_brush_mask(pos, erase=True)
+            return True
+        elif self.mask_tool == 'rect':
+            if event.button() == Qt.LeftButton:
+                self._mask_rect_start = pos
+                self._mask_is_drawing = True
+            elif event.button() == Qt.RightButton:
+                self._mask_rect_start = None
+                self._mask_is_drawing = False
+                self.update()
+            return True
+        elif self.mask_tool == 'lasso':
+            if event.button() == Qt.LeftButton:
+                if not self._mask_is_drawing:
+                    self._mask_lasso_pts = [pos]
+                    self._mask_is_drawing = True
+                else:
+                    self._mask_lasso_pts.append(pos)
+            elif event.button() == Qt.RightButton:
+                self._fill_lasso_mask(self._mask_lasso_pts)
+                self._mask_lasso_pts  = []
+                self._mask_is_drawing = False
+                self.update()
+            return True
+        return False
+
+    def handle_mask_move(self, event):
+        """Devuelve True si el evento fue consumido por el tool de máscara."""
+        if self.mask_tool is None:
+            return False
+        pos = event.pos()
+        self._mask_cursor_pos = pos
+        if self.mask_tool == 'brush':
+            if event.buttons() & Qt.LeftButton:
+                self._paint_brush_mask(pos, erase=False)
+            elif event.buttons() & Qt.RightButton:
+                self._paint_brush_mask(pos, erase=True)
+            return True
+        elif self.mask_tool in ('rect', 'lasso'):
+            self.update()
+            return True
+        return False
+
+    def handle_mask_release(self, event):
+        """Devuelve True si el evento fue consumido por el tool de máscara."""
+        if self.mask_tool is None:
+            return False
+        if (self.mask_tool == 'rect' and self._mask_is_drawing
+                and self._mask_rect_start and event.button() == Qt.LeftButton):
+            self._fill_rect_mask(self._mask_rect_start, event.pos())
+            self._mask_rect_start = None
+            self._mask_is_drawing = False
+        return True  # cualquier release mientras hay mask_tool activo se consume
 
 

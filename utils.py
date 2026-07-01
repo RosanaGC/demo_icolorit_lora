@@ -20,7 +20,10 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.distributed as dist
-from tensorboardX import SummaryWriter
+try:
+    from tensorboardX import SummaryWriter
+except ImportError:
+    SummaryWriter = None
 from timm.utils import get_state_dict
 from torch import inf
 

@@ -12,7 +12,4 @@ samples/*.orig.*
 logs/
 
 # pesos / artefactos grandes
-checkpoints/
-*.pt
-*.pth
-*.ckpt
+checks/

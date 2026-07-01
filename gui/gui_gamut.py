@@ -15,6 +15,7 @@ class GUIGamut(QWidget):
     - Valida con máscara a la misma escala del widget.
     """
     update_color = pyqtSignal(object)  # emite np.uint8[3] (RGB)
+    update_lab = pyqtSignal(object)    # emite dict con rgb/lab exactos del bin
 
     def __init__(self, gamut_size=110):
         super().__init__()
@@ -90,8 +91,16 @@ class GUIGamut(QWidget):
             return
         x = int(np.clip(pos.x(), 0, self.win_size - 1))
         y = int(np.clip(pos.y(), 0, self.win_size - 1))
-        rgb = self.ab_map_up[y, x].astype(np.uint8)
+        gx = int(np.clip(round(x * (self.ab_grid.B - 1) / max(1, self.win_size - 1)), 0, self.ab_grid.B - 1))
+        gy = int(np.clip(round(y * (self.ab_grid.A - 1) / max(1, self.win_size - 1)), 0, self.ab_grid.A - 1))
+        a_val, b_val = self.ab_grid.xy2ab(gx, gy)
+        rgb = self.ab_map[gy, gx].astype(np.uint8)
         self.update_color.emit(rgb)
+        self.update_lab.emit({
+            "rgb": rgb.copy(),
+            "lab": np.array([self.l_in, float(a_val), float(b_val)], dtype=np.float32),
+            "ab": np.array([float(a_val), float(b_val)], dtype=np.float32),
+        })
 
     # ---------------- Qt Overrides ----------------
     def paintEvent(self, event):
