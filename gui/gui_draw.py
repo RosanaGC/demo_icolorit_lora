@@ -3,6 +3,7 @@ import datetime
 import glob
 import os
 import json
+import time
 import cv2
 import numpy as np
 import torch
@@ -94,6 +95,11 @@ class GUIDraw(QWidget):
         self._mask_lasso_pts  = []     # list[QPoint]
         self._mask_is_drawing = False
         self._mask_cursor_pos = None
+
+        # ---- Canvas a resolución completa: se persiste en disco, no en RAM ----
+        # Se actualiza solo al cerrar una máscara o guardar (ver
+        # _sync_full_res_canvas / _fullres_cache_path) — nunca en cada hint.
+        self._last_ab = None   # última salida cruda del modelo (chica)
 
     # -------------------- Helpers zoom/coords --------------------
     def _zoom_dims(self):
@@ -201,6 +207,7 @@ class GUIDraw(QWidget):
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
         self._mask_cursor_pos = None
+        self._last_ab = None
 
         # avisar geometría base (zoom=1) al resto de la UI
         self.canvas_geom_changed.emit(self.dw, self.dh, self.win_w, self.win_h, float(self.zoom))
@@ -310,6 +317,11 @@ class GUIDraw(QWidget):
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
         self._mask_cursor_pos = None
+        self._last_ab = None
+        # Nota: no se sincroniza el canvas full-res acá — correr esto al
+        # cargar cada imagen agrega una recomputación bloqueante justo al
+        # terminar de cargar. Se hace perezosamente al cerrar una máscara o
+        # guardar (ver _sync_full_res_canvas).
         self.compute_result()
         self.update()
 
@@ -413,11 +425,14 @@ class GUIDraw(QWidget):
         dst_dir = os.path.join(dir_path, f"icolor_{ts}") if make_subdir else dir_path
         os.makedirs(dst_dir, exist_ok=True)
 
-        # Usar committed_canvas (lo que se visualiza) escalado a resolución original.
-        # Si no hay committed_canvas, caer a result_full o result.
-        if self.committed_canvas is not None:
-            h_full, w_full = self.im_full.shape[:2]
-            out = cv2.resize(self.committed_canvas, (w_full, h_full), interpolation=cv2.INTER_CUBIC)
+        # Canvas a resolución completa, persistido en disco (ver
+        # _sync_full_res_canvas). Se sincroniza siempre acá, para reflejar la
+        # máscara/hints activos aunque la región no se haya cerrado todavía.
+        self._sync_full_res_canvas()
+        _, cache_path = self._fullres_cache_path()
+        cached = self._read_png_rgb(cache_path) if cache_path and os.path.exists(cache_path) else None
+        if cached is not None:
+            out = cached
         elif self.result_full is not None:
             out = self.result_full
         else:
@@ -513,10 +528,14 @@ class GUIDraw(QWidget):
         out_dir = os.path.dirname(base_path)
         os.makedirs(out_dir, exist_ok=True)
 
-        # Usar committed_canvas (lo que se visualiza) escalado a resolución original.
-        if self.committed_canvas is not None:
-            h_full, w_full = self.im_full.shape[:2]
-            out = cv2.resize(self.committed_canvas, (w_full, h_full), interpolation=cv2.INTER_CUBIC)
+        # Canvas a resolución completa, persistido en disco (ver
+        # _sync_full_res_canvas). Se sincroniza siempre acá, para reflejar la
+        # máscara/hints activos aunque la región no se haya cerrado todavía.
+        self._sync_full_res_canvas()
+        _, cache_path = self._fullres_cache_path()
+        cached = self._read_png_rgb(cache_path) if cache_path and os.path.exists(cache_path) else None
+        if cached is not None:
+            out = cached
         elif self.result_full is not None:
             out = self.result_full
         else:
@@ -641,21 +660,13 @@ class GUIDraw(QWidget):
                        w=self.load_size // self.model.patch_size,
                        p1=self.model.patch_size, p2=self.model.patch_size)[0]
         ab = ab.detach().numpy()
+        self._last_ab = ab  # usado por _sync_full_res_canvas(), sin recomputar el modelo
 
         ab_win = cv2.resize(ab, (self.win_w, self.win_h), interpolation=cv2.INTER_CUBIC)
         ab_win = ab_win * 110
         pred_lab = np.concatenate((self.l_win[..., np.newaxis], ab_win), axis=2)
         pred_rgb = (np.clip(color.lab2rgb(pred_lab), 0, 1) * 255).astype('uint8')
         self.result = pred_rgb
-
-        # Comentado para probar performance: result_full es un cálculo a resolución
-        # completa que corría en cada edición pero cuyo único consumidor (el
-        # fallback "elif self.result_full is not None" en save_result/save_result_as)
-        # nunca se activa, porque committed_canvas siempre se setea junto con esto.
-        # h_full, w_full = self.im_full.shape[:2]
-        # ab_full = cv2.resize(ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
-        # pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
-        # self.result_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
 
         # ── Compositing ───────────────────────────────────────────────────────
         # NO CAMBIAR: lógica de referencia acordada en bug_fix branch (2026-06-15).
@@ -676,6 +687,85 @@ class GUIDraw(QWidget):
             self.committed_canvas = pred_rgb.copy()
             self.update_result.emit(pred_rgb)
         self.update()
+
+    def _fullres_cache_path(self):
+        """(carpeta, archivo) del canvas de trabajo a resolución completa,
+        persistido en disco junto a la imagen — no en RAM. Devuelve (None, None)
+        si todavía no hay imagen cargada."""
+        if not self.image_file:
+            return None, None
+        base_dir = os.path.dirname(os.path.abspath(self.image_file))
+        stem = os.path.splitext(os.path.basename(self.image_file))[0]
+        out_dir = os.path.join(base_dir, f"carpeta_colorizacion_{stem}")
+        return out_dir, os.path.join(out_dir, f"{stem}_fullres.png")
+
+    def _read_png_rgb(self, path):
+        """Lee un PNG a RGB. Usa imdecode (no imread) por compat con paths
+        no-ASCII en Windows, igual que read_image()."""
+        raw = np.fromfile(path, dtype=np.uint8)
+        bgr = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        if bgr is None:
+            return None
+        return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    def _write_png_rgb(self, path, rgb):
+        """Escribe un PNG desde RGB. Usa imencode + tofile (no imwrite) por
+        compat con paths no-ASCII en Windows, igual que read_image()."""
+        ok, buf = cv2.imencode(".png", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        if ok:
+            buf.tofile(path)
+
+    def _sync_full_res_canvas(self):
+        """Actualiza el archivo de trabajo a resolución completa en disco,
+        reusando el último `ab` ya calculado por compute_result() — no vuelve
+        a correr el modelo, solo hace el resize/lab2rgb a resolución completa.
+
+        Se persiste en disco (no como array en RAM) para no perder el trabajo
+        si la app se cuelga, y para no mantener un array grande vivo toda la
+        sesión — se lee el estado previo, se actualiza, se escribe, se
+        descarta de memoria.
+
+        Esto es caro para fotos grandes (varios segundos) — se llama solo en
+        acciones deliberadas y poco frecuentes: cerrar una máscara
+        (clear_mask), guardar sesión (.iclr) y guardar el resultado final
+        (save_result/save_result_as). Nunca en mouseMoveEvent, al poner un
+        hint, ni al cargar la imagen.
+        """
+        if self._last_ab is None or self.im_full is None:
+            return
+        out_dir, cache_path = self._fullres_cache_path()
+        if cache_path is None:
+            return
+
+        t0 = time.time()
+        h_full, w_full = self.im_full.shape[:2]
+        ab_full = cv2.resize(self._last_ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
+        pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
+        pred_rgb_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
+
+        if self.region_mask is not None and np.any(self.region_mask):
+            base = None
+            if os.path.exists(cache_path):
+                base = self._read_png_rgb(cache_path)
+                if base is not None and base.shape[:2] != (h_full, w_full):
+                    base = None  # tamaño no coincide (otra imagen) — recalcular
+            if base is None:
+                # Primera vez: sembrar con la colorización full-res actual
+                # para toda la foto — no negro (a resolución de ventana esto
+                # lo hace reset() al cargar; acá se hace perezosamente).
+                base = pred_rgb_full.copy()
+            m_full = cv2.resize(self.region_mask.astype(np.uint8), (w_full, h_full),
+                                 interpolation=cv2.INTER_NEAREST).astype(bool)
+            base[m_full] = pred_rgb_full[m_full]
+            out_img = base
+        else:
+            out_img = pred_rgb_full
+
+        os.makedirs(out_dir, exist_ok=True)
+        self._write_png_rgb(cache_path, out_img)
+
+        print(f"[PERF] _sync_full_res_canvas: {time.time() - t0:.3f}s "
+              f"(size={w_full}x{h_full}) -> {cache_path}")
 
     # -------------------- Pintado --------------------
     def paintEvent(self, event):
@@ -818,6 +908,11 @@ class GUIDraw(QWidget):
 
     def clear_mask(self):
         """Borra solo la máscara activa (canvas e hints se conservan)."""
+        # Cerrar la región acá: sincronizar el canvas full-res en disco con su
+        # estado final antes de soltarla — costo concentrado en esta acción
+        # deliberada, no en cada hint puesto mientras la máscara estaba activa.
+        if self.region_mask is not None and np.any(self.region_mask):
+            self._sync_full_res_canvas()
         self.region_mask      = None
         self._mask_shapes     = []
         self._mask_rect_start = None

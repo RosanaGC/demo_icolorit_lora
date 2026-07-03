@@ -3,6 +3,7 @@
 # Dark theme, toolbar, left panel (gamut + palette + reference), status bar.
 
 import os
+import shutil
 import time
 
 import numpy as np
@@ -1330,6 +1331,17 @@ class IColoriTUIv2(QMainWindow):
             _cv2.imwrite(mask_path, dw.region_mask * 255)
             mask_basename = os.path.basename(mask_path)
 
+        # ── Guardar canvas a resolución completa ──────────────────────────────
+        # Sincroniza el archivo de trabajo en disco (costo concentrado en esta
+        # acción, no en cada hint) y lo copia junto a la sesión.
+        dw._sync_full_res_canvas()
+        canvas_full_basename = ""
+        _, fullres_cache_path = dw._fullres_cache_path()
+        if fullres_cache_path and os.path.exists(fullres_cache_path):
+            canvas_full_path = path.replace(".iclr", "_canvas_full.png")
+            shutil.copyfile(fullres_cache_path, canvas_full_path)
+            canvas_full_basename = os.path.basename(canvas_full_path)
+
         # NO CAMBIAR: estructura del JSON de sesión v1.2 — base de referencia.
         # Agregar campos nuevos es OK; renombrar o eliminar rompe compatibilidad.
         session = {
@@ -1337,6 +1349,7 @@ class IColoriTUIv2(QMainWindow):
             "original_path":    getattr(dw, 'image_file', ''),
             "target_png":       os.path.basename(png_path),
             "canvas_png":       canvas_basename,
+            "canvas_full_png":  canvas_full_basename,
             "region_mask_png":  mask_basename,
             "brightness":       0,    # adjustments are baked into target_png
             "contrast":         100,
