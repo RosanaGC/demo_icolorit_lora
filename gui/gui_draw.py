@@ -89,7 +89,6 @@ class GUIDraw(QWidget):
         self.mask_tool        = None   # 'brush' | 'rect' | 'lasso' | None
         self.region_mask      = None   # uint8 ndarray (win_h, win_w) o None
         self.committed_canvas = None   # uint8 ndarray (win_h, win_w, 3) o None
-        self._last_edit_mask  = None   # máscara del último compute_result con máscara (o None si fue global)
         self.mask_brush_size  = 20     # px en espacio de imagen (win_w × win_h)
         self._mask_shapes     = []     # list[np.ndarray] — una por lasso/rect, para undo
         self._mask_rect_start = None   # QPoint
@@ -100,7 +99,7 @@ class GUIDraw(QWidget):
         # ---- Canvas a resolución completa: se persiste en disco, no en RAM ----
         # Se actualiza solo al cerrar una máscara o guardar (ver
         # _sync_full_res_canvas / _fullres_cache_path) — nunca en cada hint.
-        self._last_ab = None   # última salida cruda del modelo (chica)
+        self._fullres_dirty = False  # cambios pendientes de llevar al cache full-res
 
     # -------------------- Helpers zoom/coords --------------------
     def _zoom_dims(self):
@@ -203,13 +202,12 @@ class GUIDraw(QWidget):
         # Resetear máscara al cargar nueva imagen
         self.region_mask      = None
         self.committed_canvas = None
-        self._last_edit_mask  = None
         self._mask_shapes     = []
         self._mask_rect_start = None
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
         self._mask_cursor_pos = None
-        self._last_ab = None
+        self._fullres_dirty = False
 
         # avisar geometría base (zoom=1) al resto de la UI
         self.canvas_geom_changed.emit(self.dw, self.dh, self.win_w, self.win_h, float(self.zoom))
@@ -314,13 +312,12 @@ class GUIDraw(QWidget):
         self._redo.clear()
         self.region_mask      = None
         self.committed_canvas = None
-        self._last_edit_mask  = None
         self._mask_shapes     = []
         self._mask_rect_start = None
         self._mask_lasso_pts  = []
         self._mask_is_drawing = False
         self._mask_cursor_pos = None
-        self._last_ab = None
+        self._fullres_dirty = False
         # Nota: no se sincroniza el canvas full-res acá — correr esto al
         # cargar cada imagen agrega una recomputación bloqueante justo al
         # terminar de cargar. Se hace perezosamente al cerrar una máscara o
@@ -663,7 +660,7 @@ class GUIDraw(QWidget):
                        w=self.load_size // self.model.patch_size,
                        p1=self.model.patch_size, p2=self.model.patch_size)[0]
         ab = ab.detach().numpy()
-        self._last_ab = ab  # usado por _sync_full_res_canvas(), sin recomputar el modelo
+        self._fullres_dirty = True
 
         ab_win = cv2.resize(ab, (self.win_w, self.win_h), interpolation=cv2.INTER_CUBIC)
         ab_win = ab_win * 110
@@ -684,16 +681,10 @@ class GUIDraw(QWidget):
             m = self.region_mask.astype(bool)
             canvas[m] = pred_rgb[m]   # NO CAMBIAR: hard copy de píxeles de la máscara
             self.committed_canvas = canvas
-            # NUEVO (no altera el compositing): recuerda con qué máscara se
-            # escribió esta región, para que _sync_full_res_canvas() pueda
-            # replicar el mismo hard-copy a resolución completa aunque la
-            # máscara ya se haya cerrado (region_mask == None) al guardar.
-            self._last_edit_mask = self.region_mask.copy()
             self.update_result.emit(canvas)
         else:
             # NO CAMBIAR: sin máscara, el canvas es la colorización global completa
             self.committed_canvas = pred_rgb.copy()
-            self._last_edit_mask = None  # NUEVO: ver comentario arriba
             self.update_result.emit(pred_rgb)
         self.update()
 
@@ -725,21 +716,14 @@ class GUIDraw(QWidget):
             buf.tofile(path)
 
     def _sync_full_res_canvas(self):
-        """Actualiza el archivo de trabajo a resolución completa en disco,
-        reusando el último `ab` ya calculado por compute_result() — no vuelve
-        a correr el modelo, solo hace el resize/lab2rgb a resolución completa.
+        """Actualiza el archivo de trabajo a resolución completa en disco sin
+        volver a ejecutar el modelo.
 
-        Replica a resolución completa exactamente lo que hizo el último
-        compute_result() a resolución de ventana (ver NO CAMBIAR ahí):
-          - Si fue con máscara (_last_edit_mask no es None): preserva lo ya
-            comprometido en disco de ediciones anteriores y sólo hace
-            hard-copy de esa región con la reconstrucción fresca — igual que
-            committed_canvas, que tampoco toca el resto del canvas.
-          - Si fue sin máscara (_last_edit_mask es None): reemplaza todo,
-            igual que committed_canvas.
-        Se usa _last_edit_mask (no self.region_mask) porque region_mask se
-        pone en None al cerrar la máscara (clear_mask) y perdería esta
-        distinción justo antes de guardar.
+        `committed_canvas` es la fuente de verdad de lo que ve el usuario. Se
+        lleva su Lab completo a resolución original y se agrega solamente el
+        detalle fino de luminancia de `l_full`. Así se preservan exactamente
+        los colores y todas las regiones ya compuestas, sin reducir el archivo
+        final a un simple upscale borroso de 512 px.
 
         Se persiste en disco (no como array en RAM) para no perder el trabajo
         si la app se cuelga, y para no mantener un array grande vivo toda la
@@ -751,7 +735,8 @@ class GUIDraw(QWidget):
         (save_result/save_result_as). Nunca en mouseMoveEvent, al poner un
         hint, ni al cargar la imagen.
         """
-        if self._last_ab is None or self.im_full is None or self.committed_canvas is None:
+        if (not self._fullres_dirty or
+                self.im_full is None or self.committed_canvas is None):
             return
         out_dir, cache_path = self._fullres_cache_path()
         if cache_path is None:
@@ -759,42 +744,35 @@ class GUIDraw(QWidget):
 
         t0 = time.time()
         h_full, w_full = self.im_full.shape[:2]
-        ab_full = cv2.resize(self._last_ab, (w_full, h_full), interpolation=cv2.INTER_CUBIC) * 110
-        pred_lab_full = np.concatenate((self.l_full[..., np.newaxis], ab_full), axis=2)
-        pred_rgb_full = (np.clip(color.lab2rgb(pred_lab_full), 0, 1) * 255).astype('uint8')
+        canvas_lab = color.rgb2lab(self.committed_canvas).astype(np.float32)
+        canvas_lab_full = cv2.resize(canvas_lab, (w_full, h_full),
+                                     interpolation=cv2.INTER_CUBIC)
 
-        if self._last_edit_mask is None:
-            # Última edición sin máscara: reemplazo global, igual que
-            # committed_canvas en ese mismo caso.
-            out_img = pred_rgb_full
-        else:
-            # Última edición con máscara: no perder lo comprometido en syncs
-            # anteriores (ya nítido, a resolución completa, congelado en su
-            # propio momento) — sólo hard-copy de la región de esta máscara.
-            base = None
-            if os.path.exists(cache_path):
-                base = self._read_png_rgb(cache_path)
-                if base is not None and base.shape[:2] != (h_full, w_full):
-                    base = None  # tamaño no coincide (otra imagen) — recalcular
-            if base is None:
-                # Sin cache en disco todavía: reconstruir el fondo sin
-                # upscalear píxeles de color (blur). committed_canvas
-                # (win_size) sólo puede tener negro puro (init de
-                # compute_result, NO CAMBIAR) o píxeles ya comprometidos.
-                # Negro -> negro nativo a resolución completa. Comprometido ->
-                # pred_rgb_full (ya nítido, no un resize de committed_canvas).
-                touched = np.any(self.committed_canvas != 0, axis=2)
-                touched_full = cv2.resize(touched.astype(np.uint8), (w_full, h_full),
-                                           interpolation=cv2.INTER_NEAREST).astype(bool)
-                base = np.zeros((h_full, w_full, 3), dtype=np.uint8)
-                base[touched_full] = pred_rgb_full[touched_full]
-            m_full = cv2.resize(self._last_edit_mask.astype(np.uint8), (w_full, h_full),
-                                 interpolation=cv2.INTER_NEAREST).astype(bool)
-            base[m_full] = pred_rgb_full[m_full]
-            out_img = base
+        # Separar del original sólo la textura que desaparece al llevarlo al
+        # tamaño del canvas. El color y la luminosidad de escala grande siguen
+        # viniendo de committed_canvas, por lo que el resultado coincide con
+        # la vista incluso tras varias regiones congeladas.
+        l_full = self.l_full.astype(np.float32, copy=False)
+        l_low = cv2.resize(l_full, (self.win_w, self.win_h),
+                           interpolation=cv2.INTER_AREA)
+        l_low_full = cv2.resize(l_low, (w_full, h_full),
+                                interpolation=cv2.INTER_CUBIC)
+        canvas_lab_full[..., 0] = np.clip(
+            canvas_lab_full[..., 0] + l_full - l_low_full, 0, 100
+        )
+        out_img = (np.clip(color.lab2rgb(canvas_lab_full), 0, 1) * 255).astype(np.uint8)
+
+        # Mantener negro puro en zonas deliberadamente no comprometidas.
+        untouched = np.all(self.committed_canvas == 0, axis=2)
+        if np.any(untouched):
+            untouched_full = cv2.resize(untouched.astype(np.uint8),
+                                         (w_full, h_full),
+                                         interpolation=cv2.INTER_NEAREST).astype(bool)
+            out_img[untouched_full] = 0
 
         os.makedirs(out_dir, exist_ok=True)
         self._write_png_rgb(cache_path, out_img)
+        self._fullres_dirty = False
 
         print(f"[PERF] _sync_full_res_canvas: {time.time() - t0:.3f}s "
               f"(size={w_full}x{h_full}) -> {cache_path}")
