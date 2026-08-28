@@ -1,18 +1,42 @@
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
+venv/
 .env
+.env.*
+!.env.example
 .DS_Store
 .vscode/
 .idea/
+.claude/
+
+# documentacion interna / gestion del proyecto
+CHANGELOG*.md
+PROFILE_ROSANA.md
+ROADMAP.md
 
 # datos y salidas
 outputs/
 samples/
 logs/
+tmp/
+temp/
+*.log
 
 # pesos / artefactos grandes
 checks/
+
+# artefactos de pruebas, cobertura y empaquetado
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
 
 # estado de apps ajenas al proyecto
 .dock_state.bin
